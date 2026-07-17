@@ -1,0 +1,26 @@
+[project]
+authors = [{name = "Paul Auerbach", email = "paul.auerbach@barkhauseninstitut.org"}]
+dependencies = []
+name = "robot_trailer_path_planning"
+requires-python = ">= 3.11"
+version = "0.1.0"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+#[tool.pixi.pypi-dependencies]
+#robot_trailer_path_planning = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+matplotlib = ">=3.11.0,<4"
+pyinstrument = "*"
+gprof2dot = "*"
+graphviz = "*"
+numba = ">=0.66.0,<0.67"
