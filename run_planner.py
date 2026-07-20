@@ -6,6 +6,7 @@ visualises the resulting trajectory using the same ``Visualizer`` class that
 is used by ``run_visualizer.py``.
 """
 
+import time
 import argparse
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -28,7 +29,8 @@ from planner import HybridAStarPlanner
 # planner applicable to a wider variety of start/goal configurations and obstacle
 # layouts.  It includes forward, reverse and turning motions.
 CONTROL_SETS = {
-    "default": [(1.0, 1.0)] * 60 + [(0.5, 1.0)] * 50 + [(1.0, 1.0)] * 60,
+    # "default": [(1.0, 1.0)] * 60 + [(0.5, 1.0)] * 50 + [(1.0, 1.0)] * 60,
+    "default": [(1.0, 1.0)]  + [(0.5, 1.0)]  + [(1.0, 0.5)] ,
     "slow_turn": [(0.5, 1.0)] * 80 + [(1.0, 0.5)] * 80,
     "sharp_turn": [(0.2, 1.0)] * 40 + [(1.0, 0.2)] * 40,
     "zigzag": [(1.0, 0.5)] * 30 + [(0.5, 1.0)] * 30 + [(1.0, 0.5)] * 30 + [(0.5, 1.0)] * 30,
@@ -37,8 +39,8 @@ CONTROL_SETS = {
     # primitives while still offering good coverage.
     "dense": [
         (vl, vr)
-        for vl in np.linspace(-1.0, 1.0, 9)  # -1.0, -0.75, ..., 1.0
-        for vr in np.linspace(-1.0, 1.0, 9)
+        for vl in np.linspace(-1.0, 1.0, 3)  # -1.0, -0.75, ..., 1.0
+        for vr in np.linspace(-1.0, 1.0, 3)
     ],
 }
 
@@ -78,7 +80,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Create a simple 10 m × 10 m occupancy grid with a few rectangular obstacles.
     # ------------------------------------------------------------------
-    grid_resolution = 0.1  # metres per cell
+    grid_resolution = 0.5  # metres per cell
     grid_size = int(10.0 / grid_resolution)  # 100 cells per side
     occupancy_grid = np.zeros((grid_size, grid_size), dtype=bool)
 
@@ -104,8 +106,10 @@ def main() -> None:
     )
 
     # ------------------------------------------------------------------
-    # Planner initialisation and path planning (with occupancy grid)
+    # Planner initialisation (with occupancy grid) and distance‑map visualisation
     # ------------------------------------------------------------------
+    print(f"Using control set: {CONTROL_SETS[args.set]}")
+    starttime = time.time()
     planner = HybridAStarPlanner(
         simulator=sim,
         control_set=CONTROL_SETS[args.set],
@@ -113,48 +117,89 @@ def main() -> None:
         grid_resolution=grid_resolution,
         grid_origin=(0.0, 0.0),
     )
+    endtime = time.time()
+    print(f"Planner initialisation took {endtime - starttime:.4f} seconds.")
+
+    # Compute the reverse distance‑to‑goal map (heuristic field) and display it.
+    # This is shown before the planner expands any nodes.
+    # distance_map = planner.reverse_distance_map(goal)
+    # fig, ax = plt.subplots(figsize=(8, 8))
+    # if distance_map.size > 0:
+    #     rows, cols = distance_map.shape
+    #     extent = (
+    #         0.0,
+    #         cols * grid_resolution,
+    #         0.0,
+    #         rows * grid_resolution,
+    #     )
+    #     ax.imshow(
+    #         distance_map,
+    #         origin="lower",
+    #         extent=extent,
+    #         cmap="viridis",
+    #         alpha=0.6,
+    #     )
+    #     # Add a colour bar for reference.
+    #     cbar = fig.colorbar(
+    #         plt.cm.ScalarMappable(cmap="viridis"),
+    #         ax=ax,
+    #         label="Distance to goal (m)",
+    #     )
+    #     cbar.set_alpha(1.0)
+    #     #cbar.draw_all()
+    # plt.show()
+
+    # Now run the actual planning (timed).
+    starttime = time.time()
     path = planner.plan(start, goal)
+    # Retrieve all nodes that were expanded during planning for visualisation.
+    # explored_nodes = planner.get_explored()
+    endtime = time.time()
+    print(f"Planning took {endtime - starttime:.4f} seconds.")
 
-    if not path:
-        print("No feasible path found.")
-        return
+    # if not path:
+    #     print("No feasible path found.")
+    #     return
 
-    # ------------------------------------------------------------------
-    # Visualise the resulting path with animation (same style as run_visualizer)
-    # ------------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(8, 8))
+    # # ------------------------------------------------------------------
+    # # Visualise the resulting path with animation (same style as run_visualizer)
+    # # ------------------------------------------------------------------
+    # fig, ax = plt.subplots(figsize=(8, 8))
 
-    # Simulation time step – used only for animation timing.
-    dt = 0.1
+    # # Simulation time step – used only for animation timing.
+    # dt = 0.1
 
-    def init():
-        """Draw the initial state before the animation starts."""
-        # At frame 0 we have only the start state.
-        vis.draw(ax, path[0], [path[0]])
-        return []
+    # def init():
+    #     """Draw the initial state before the animation starts."""
+    #     # At frame 0 we have only the start state.
+    #     # Visualise the start state, the path history, and the explored nodes.
+    #     # vis.draw(ax, path[0], [path[0]], explored=explored_nodes)
+    #     vis.draw(ax, path[0], [path[0]])
+    #     return []
 
-    def update(frame):
-        """Update function for each animation frame.
+    # def update(frame):
+    #     """Update function for each animation frame.
 
-        ``frame`` indexes into the ``path`` list produced by the planner.
-        """
-        # Current state and the history up to this frame.
-        state = path[frame]
-        history = path[: frame + 1]
-        vis.draw(ax, state, history)
-        return []
+    #     ``frame`` indexes into the ``path`` list produced by the planner.
+    #     """
+    #     # Current state and the history up to this frame.
+    #     state = path[frame]
+    #     history = path[: frame + 1]
+    #     # vis.draw(ax, state, history, explored=explored_nodes)
+    #     vis.draw(ax, state, history)
+    #     return []
 
-    anim = animation.FuncAnimation(
-        fig,
-        update,
-        frames=len(path),
-        init_func=init,
-        interval=dt * 1000,
-        repeat=False,
-    )
+    # anim = animation.FuncAnimation(
+    #     fig,
+    #     update,
+    #     frames=len(path),
+    #     init_func=init,
+    #     interval=dt * 1000,
+    #     repeat=False,
+    # )
 
-    ax.set_title("Hybrid A* planned path (animated)")
-    plt.show()
+    # ax.set_title("Hybrid A* planned path (animated)")
+    # plt.show()
 
 
 if __name__ == "__main__":

@@ -81,7 +81,7 @@ class Visualizer:
     # Draw one state
     # ------------------------------------------------------------
 
-    def draw(self, ax, state, history=None):
+    def draw(self, ax, state, history=None, explored=None):
         """
         Draw robot and trailer.
         """
@@ -196,6 +196,19 @@ class Visualizer:
                 [s.x for s in history],
                 [s.y for s in history],
                 linewidth=1,
+            )
+
+        # Visualise all nodes that were expanded during planning.  These are
+        # typically a large set, so we plot them as semi‑transparent small
+        # markers to avoid cluttering the view.
+        if explored is not None:
+            ax.scatter(
+                [s.x for s in explored],
+                [s.y for s in explored],
+                c="red",
+                s=4,
+                alpha=0.4,
+                label="explored",
             )
 
         # --------------------------------------------------------

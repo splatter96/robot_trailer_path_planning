@@ -16,11 +16,16 @@ platforms = ["linux-64"]
 #[tool.pixi.pypi-dependencies]
 #robot_trailer_path_planning = { path = ".", editable = true }
 
-[tool.pixi.tasks]
-
 [tool.pixi.dependencies]
 matplotlib = ">=3.11.0,<4"
 pyinstrument = "*"
 gprof2dot = "*"
 graphviz = "*"
 numba = ">=0.66.0,<0.67"
+pybind11 = ">=3.0.3,<4"
+valgrind = "==3.26.0"
+
+[tool.pixi.tasks]
+#Build the C++ pybind11 extension using CMake.  This creates a shared library
+#``robot_trailer_sim_cpp.*`` that is importable from Python.
+build_cpp = "cmake -S . -B build && cmake --build build"

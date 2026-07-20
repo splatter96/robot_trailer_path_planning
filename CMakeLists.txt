@@ -19,6 +19,7 @@ pybind11_add_module(robot_trailer_sim_cpp
 pybind11_add_module(robot_trailer_cpp
     cpp/simulator.cpp
     cpp/planner.cpp
+    cpp/footprint_lookup.cpp
 )
 
 target_compile_options(robot_trailer_cpp PRIVATE
