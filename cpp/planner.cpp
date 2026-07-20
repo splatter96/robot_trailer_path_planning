@@ -14,7 +14,7 @@
 #include <pybind11/numpy.h>
 #include <queue>
 #include <vector>
-#include <unordered_map>
+#include <cstdint>
 #include <cmath>
 #include <memory>
 #include <algorithm>
@@ -27,6 +27,8 @@ namespace py = pybind11;
 
 // Include the definitions of RobotParameters, RobotState, and Simulator.
 #include "simulator.hpp"
+// Lightweight profiler for timing hot regions.
+#include "profiler.hpp"
 
 // ---------------------------------------------------------------------------
 // Helper utilities (same as in the Python implementation)
@@ -126,7 +128,6 @@ static inline double heuristic(const RobotState &s, const RobotState &goal,
     return std::hypot(dx, dy);
 }
 
-// Simple struct to use as a key in unordered_map.
 struct StateKey {
     int x, y, theta, beta;
     bool operator==(StateKey const &other) const {
@@ -134,14 +135,81 @@ struct StateKey {
     }
 };
 
-struct StateKeyHash {
-    std::size_t operator()(StateKey const &k) const noexcept {
-        // Combine hashes of individual fields.
-        std::size_t h = std::hash<int>{}(k.x);
-        h = h * 31u + std::hash<int>{}(k.y);
-        h = h * 31u + std::hash<int>{}(k.theta);
-        h = h * 31u + std::hash<int>{}(k.beta);
-        return h;
+static inline uint64_t splitmix64(uint64_t x) {
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
+static inline uint64_t pack_state_key(const StateKey &k) {
+    uint64_t x = static_cast<uint32_t>(k.x);
+    uint64_t y = static_cast<uint32_t>(k.y);
+    uint64_t theta = static_cast<uint32_t>(k.theta & 0xffff);
+    uint64_t beta = static_cast<uint32_t>(k.beta & 0xffff);
+    return (x << 32) | (y << 16) | (theta << 8) | beta;
+}
+
+struct StateIndexMap {
+    struct Entry { uint64_t key = 0; int node_idx = -1; };
+    std::vector<Entry> entries;
+    size_t mask = 0;
+    int count = 0;
+
+    explicit StateIndexMap(size_t capacity) {
+        size_t size = 1;
+        while (size < capacity * 2) size <<= 1;
+        entries.assign(size, Entry{});
+        mask = size - 1;
+        count = 0;
+    }
+
+    int find(const StateKey &key) const {
+        uint64_t packed = pack_state_key(key);
+        size_t pos = splitmix64(packed) & mask;
+        while (true) {
+            const Entry &entry = entries[pos];
+            if (entry.node_idx < 0) return -1;
+            if (entry.key == packed) return entry.node_idx;
+            pos = (pos + 1) & mask;
+        }
+    }
+
+    void insert(const StateKey &key, int node_idx) {
+        if (count * 2 >= static_cast<int>(entries.size())) resize(entries.size() * 2);
+        uint64_t packed = pack_state_key(key);
+        size_t pos = splitmix64(packed) & mask;
+        while (true) {
+            Entry &entry = entries[pos];
+            if (entry.node_idx < 0) {
+                entry.key = packed;
+                entry.node_idx = node_idx;
+                ++count;
+                return;
+            }
+            if (entry.key == packed) {
+                entry.node_idx = node_idx;
+                return;
+            }
+            pos = (pos + 1) & mask;
+        }
+    }
+
+    void resize(size_t new_size) {
+        std::vector<Entry> old_entries = std::move(entries);
+        entries.assign(new_size, Entry{});
+        mask = new_size - 1;
+        count = 0;
+        for (const Entry &entry : old_entries) {
+            if (entry.node_idx >= 0) {
+                size_t pos = splitmix64(entry.key) & mask;
+                while (entries[pos].node_idx >= 0) {
+                    pos = (pos + 1) & mask;
+                }
+                entries[pos] = entry;
+                ++count;
+            }
+        }
     }
 };
 
@@ -288,48 +356,131 @@ public:
     std::vector<RobotState> plan(const RobotState &start, const RobotState &goal) {
         // Ensure the container is empty for a fresh run.
         explored_.clear();
-        using QueueElem = std::tuple<double, double, int, RobotState, StateKey>;
-        struct Compare {
-            bool operator()(const QueueElem &a, const QueueElem &b) const {
-                // std::priority_queue is a max‑heap, so we invert comparison.
-                return std::get<0>(a) > std::get<0>(b);
-            }
-        };
-        std::priority_queue<QueueElem, std::vector<QueueElem>, Compare> open_queue;
-        int push_counter = 0;
+        // reset profiler and start total plan timer
+        profiler_.reset();
+        Profiler::ScopedTimer total_timer(profiler_, "__total__");
+        const std::size_t open_reserve = 262144; // tuneable
         auto start_key = discretize(start);
         // Compute reverse distance map if we have an occupancy grid.
         py::array_t<double> rev_dist;
         const py::array_t<double>* rev_dist_ptr = nullptr;
         if (!occupancy_grid_.is_none()) {
-            rev_dist = compute_reverse_dist(occupancy_grid_, grid_resolution_, {ox_, oy_}, goal);
+            {
+                Profiler::ScopedTimer t_rev_dist(profiler_, "reverse_dist");
+                rev_dist = compute_reverse_dist(occupancy_grid_, grid_resolution_, {ox_, oy_}, goal);
+            }
             rev_dist_ptr = &rev_dist;
         }
-        open_queue.emplace(heuristic(start, goal, rev_dist_ptr, grid_resolution_, {ox_, oy_}),
-                           0.0, push_counter++, start, start_key);
-        // open_queue.emplace(heuristic(start, goal), 0.0, push_counter++, start, start_key);
+        // Cache occupancy presence to avoid repeated Python API calls in the loop.
+        const bool has_occupancy = !occupancy_grid_.is_none();
 
-        // closed map: key -> (g, parent_key, state)
-        struct ClosedVal { double g; StateKey parent; RobotState state; };
-        std::unordered_map<StateKey, ClosedVal, StateKeyHash> closed;
-        closed.emplace(start_key, ClosedVal{0.0, StateKey{-1,-1,-1,-1}, start});
+        struct ClosedVal { double g; double f; int parent; RobotState state; int heap_index; bool expanded; };
+        std::vector<ClosedVal> nodes;
+        nodes.reserve(32768);
+        StateIndexMap state_index(1 << 22);
 
-        while (!open_queue.empty()) {
-            auto [f, g, tie, current, parent_key] = open_queue.top();
-            open_queue.pop();
-            // Record every node that is expanded (popped from the queue).
-            explored_.push_back(current);
-            auto current_key = discretize(current);
+        struct OpenHeap {
+            std::vector<int> heap;
+            std::vector<ClosedVal> *nodes;
 
-            if (std::hypot(current.x - goal.x, current.y - goal.y) < 0.2) {
-                // reconstruct path
-                std::vector<RobotState> path;
-                auto back_key = current_key;
+            explicit OpenHeap(std::vector<ClosedVal> *nodes_ptr) : nodes(nodes_ptr) {
+                heap.reserve(open_reserve);
+            }
+
+            bool empty() const { return heap.empty(); }
+
+            void swap_positions(int i, int j) {
+                int a = heap[i];
+                int b = heap[j];
+                heap[i] = b;
+                heap[j] = a;
+                (*nodes)[a].heap_index = j;
+                (*nodes)[b].heap_index = i;
+            }
+
+            bool compare(int i, int j) const {
+                const ClosedVal &a = (*nodes)[heap[i]];
+                const ClosedVal &b = (*nodes)[heap[j]];
+                if (a.f != b.f) return a.f < b.f;
+                return a.g < b.g;
+            }
+
+            void sift_up(int pos) {
+                while (pos > 0) {
+                    int parent = (pos - 1) / 2;
+                    if (compare(pos, parent)) {
+                        swap_positions(pos, parent);
+                        pos = parent;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            void sift_down(int pos) {
+                int n = static_cast<int>(heap.size());
                 while (true) {
-                    const auto &val = closed.at(back_key);
-                    path.push_back(val.state);
-                    if (val.parent == StateKey{-1,-1,-1,-1}) break;
-                    back_key = val.parent;
+                    int left = 2 * pos + 1;
+                    int right = 2 * pos + 2;
+                    int smallest = pos;
+                    if (left < n && compare(left, smallest)) smallest = left;
+                    if (right < n && compare(right, smallest)) smallest = right;
+                    if (smallest == pos) break;
+                    swap_positions(pos, smallest);
+                    pos = smallest;
+                }
+            }
+
+            void push(int node_index) {
+                heap.push_back(node_index);
+                (*nodes)[node_index].heap_index = static_cast<int>(heap.size() - 1);
+                sift_up(static_cast<int>(heap.size() - 1));
+            }
+
+            int pop_top() {
+                int top = heap[0];
+                int last = heap.back();
+                heap.pop_back();
+                if (!heap.empty()) {
+                    heap[0] = last;
+                    (*nodes)[last].heap_index = 0;
+                    sift_down(0);
+                }
+                (*nodes)[top].heap_index = -1;
+                return top;
+            }
+
+            void decrease_key(int node_index) {
+                int pos = (*nodes)[node_index].heap_index;
+                if (pos >= 0) sift_up(pos);
+            }
+        } open_list(&nodes);
+
+        double start_f = heuristic(start, goal, rev_dist_ptr, grid_resolution_, {ox_, oy_});
+        nodes.push_back(ClosedVal{0.0, start_f, -1, start, -1, false});
+        state_index.insert(start_key, 0);
+        open_list.push(0);
+
+        const double goal_thresh_sqr = 0.2 * 0.2;
+
+        while (!open_list.empty()) {
+            int current_idx;
+            {
+                Profiler::ScopedTimer t_heap(profiler_, "heap.pop");
+                current_idx = open_list.pop_top();
+            }
+            ClosedVal &current_node = nodes[current_idx];
+            current_node.expanded = true;
+            RobotState current = current_node.state;
+            double g = current_node.g;
+            explored_.push_back(current);
+
+            if ((current.x - goal.x) * (current.x - goal.x) + (current.y - goal.y) * (current.y - goal.y) < goal_thresh_sqr) {
+                std::vector<RobotState> path;
+                int back_idx = current_idx;
+                while (back_idx >= 0) {
+                    path.push_back(nodes[back_idx].state);
+                    back_idx = nodes[back_idx].parent;
                 }
                 std::reverse(path.begin(), path.end());
                 return path;
@@ -338,22 +489,76 @@ public:
             for (const auto &ctrl : control_set_) {
                 double v_left = ctrl.first;
                 double v_right = ctrl.second;
+                {
+                    Profiler::ScopedTimer t_step(profiler_, "sim.step");
+                }
                 RobotState neighbor = simulator_.step(current, v_left, v_right, dt_);
-                if (!occupancy_grid_.is_none() && collides(neighbor)) continue;
+                {
+                    Profiler::ScopedTimer t_coll(profiler_, "collides");
+                    if (has_occupancy && collides(neighbor)) continue;
+                }
+                {
+                    Profiler::ScopedTimer t_disc(profiler_, "discretize");
+                }
                 auto neighbor_key = discretize(neighbor);
                 double tentative_g = g + dt_;
-                auto it = closed.find(neighbor_key);
-                if (it == closed.end() || tentative_g < it->second.g) {
-                    // double f_cost = tentative_g + heuristic(neighbor, goal);
-                    double f_cost = tentative_g + heuristic(neighbor, goal, rev_dist_ptr, grid_resolution_, {ox_, oy_});
-                    closed[neighbor_key] = ClosedVal{tentative_g, current_key, neighbor};
-                    open_queue.emplace(f_cost, tentative_g, push_counter++, neighbor, current_key);
-                    ++push_counter;
+                Profiler::ScopedTimer t_state_find(profiler_, "state.find");
+                int existing_idx = state_index.find(neighbor_key);
+                if (existing_idx < 0) {
+                    double f_cost;
+                    {
+                        Profiler::ScopedTimer t_h(profiler_, "heuristic");
+                        f_cost = tentative_g + heuristic(neighbor, goal, rev_dist_ptr, grid_resolution_, {ox_, oy_});
+                    }
+                    int neighbor_idx = static_cast<int>(nodes.size());
+                    {
+                        Profiler::ScopedTimer t_node_push(profiler_, "nodes.push");
+                        nodes.push_back(ClosedVal{tentative_g, f_cost, current_idx, neighbor, -1, false});
+                    }
+                    {
+                        Profiler::ScopedTimer t_state_emplace(profiler_, "state.emplace");
+                        state_index.insert(neighbor_key, neighbor_idx);
+                    }
+                    {
+                        Profiler::ScopedTimer t_qpush(profiler_, "queue.push");
+                        open_list.push(neighbor_idx);
+                    }
+                } else {
+                    int neighbor_idx = existing_idx;
+                    ClosedVal &neighbor_node = nodes[neighbor_idx];
+                    if (tentative_g < neighbor_node.g) {
+                        double f_cost;
+                        {
+                            Profiler::ScopedTimer t_h(profiler_, "heuristic");
+                            f_cost = tentative_g + heuristic(neighbor, goal, rev_dist_ptr, grid_resolution_, {ox_, oy_});
+                        }
+                        neighbor_node.g = tentative_g;
+                        neighbor_node.f = f_cost;
+                        neighbor_node.parent = current_idx;
+                        neighbor_node.state = neighbor;
+                        if (neighbor_node.expanded) {
+                            neighbor_node.expanded = false;
+                            {
+                                Profiler::ScopedTimer t_qpush(profiler_, "queue.push");
+                                open_list.push(neighbor_idx);
+                            }
+                        } else if (neighbor_node.heap_index >= 0) {
+                            open_list.decrease_key(neighbor_idx);
+                        } else {
+                            {
+                                Profiler::ScopedTimer t_qpush(profiler_, "queue.push");
+                                open_list.push(neighbor_idx);
+                            }
+                        }
+                    }
                 }
             }
         }
         return {};
     }
+
+    // Return a human-readable profiler summary string.
+    std::string profile_summary() const { return profiler_.summary_string(); }
 
 private:
     const Simulator &simulator_;
@@ -373,6 +578,9 @@ private:
     // Distance map (Euclidean distance to nearest obstacle) and clearance threshold.
     py::array_t<double> distance_grid_; // same dimensions as occupancy_grid_
     double clearance_threshold_ = 0.0;
+
+    // Lightweight profiler for timing hot regions.
+    Profiler profiler_;
 
     bool collides(const RobotState &state) const {
         if (occupancy_grid_.is_none()) return false;
@@ -401,7 +609,6 @@ private:
 };
 
 PYBIND11_MODULE(robot_trailer_cpp, m) {
-    m.doc() = "C++ implementation of robot‑trailer simulator and Hybrid A* planner";
 
     // Re‑export the simulator bindings (they are defined in simulator.cpp).
     // The simulator.cpp file already creates a module named
@@ -419,6 +626,7 @@ PYBIND11_MODULE(robot_trailer_cpp, m) {
              py::arg("dt") = 0.1)
         .def("plan", &HybridAStarPlanner::plan)
         .def("get_explored", &HybridAStarPlanner::get_explored)
+           .def("profile_summary", &HybridAStarPlanner::profile_summary)
         .def("reverse_distance_map", &HybridAStarPlanner::reverse_distance_map,
              py::arg("goal"))
         ;

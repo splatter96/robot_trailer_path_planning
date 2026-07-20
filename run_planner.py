@@ -161,45 +161,47 @@ def main() -> None:
         print("No feasible path found.")
         return
 
+    print(planner.profile_summary())
+
     # ------------------------------------------------------------------
     # Visualise the resulting path with animation (same style as run_visualizer)
     # ------------------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(8, 8))
+    # fig, ax = plt.subplots(figsize=(8, 8))
 
-    # Simulation time step – used only for animation timing.
-    dt = 0.1
+    # # Simulation time step – used only for animation timing.
+    # dt = 0.1
 
-    def init():
-        """Draw the initial state before the animation starts."""
-        # At frame 0 we have only the start state.
-        # Visualise the start state, the path history, and the explored nodes.
-        # vis.draw(ax, path[0], [path[0]], explored=explored_nodes)
-        vis.draw(ax, path[0], [path[0]])
-        return []
+    # def init():
+    #     """Draw the initial state before the animation starts."""
+    #     # At frame 0 we have only the start state.
+    #     # Visualise the start state, the path history, and the explored nodes.
+    #     # vis.draw(ax, path[0], [path[0]], explored=explored_nodes)
+    #     vis.draw(ax, path[0], [path[0]])
+    #     return []
 
-    def update(frame):
-        """Update function for each animation frame.
+    # def update(frame):
+    #     """Update function for each animation frame.
 
-        ``frame`` indexes into the ``path`` list produced by the planner.
-        """
-        # Current state and the history up to this frame.
-        state = path[frame]
-        history = path[: frame + 1]
-        # vis.draw(ax, state, history, explored=explored_nodes)
-        vis.draw(ax, state, history)
-        return []
+    #     ``frame`` indexes into the ``path`` list produced by the planner.
+    #     """
+    #     # Current state and the history up to this frame.
+    #     state = path[frame]
+    #     history = path[: frame + 1]
+    #     # vis.draw(ax, state, history, explored=explored_nodes)
+    #     vis.draw(ax, state, history)
+    #     return []
 
-    anim = animation.FuncAnimation(
-        fig,
-        update,
-        frames=len(path),
-        init_func=init,
-        interval=dt * 1000,
-        repeat=False,
-    )
+    # anim = animation.FuncAnimation(
+    #     fig,
+    #     update,
+    #     frames=len(path),
+    #     init_func=init,
+    #     interval=dt * 1000,
+    #     repeat=False,
+    # )
 
-    ax.set_title("Hybrid A* planned path (animated)")
-    plt.show()
+    # ax.set_title("Hybrid A* planned path (animated)")
+    # plt.show()
 
 
 if __name__ == "__main__":
