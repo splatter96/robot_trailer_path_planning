@@ -170,3 +170,29 @@ class Simulator:
             states.append(current)
 
         return states
+
+# ---------------------------------------------------------------------------
+# Optional C++ accelerated implementation via pybind11
+# ---------------------------------------------------------------------------
+# The heavy‑weight calculations (wheel velocity conversion, derivative
+# computation, and integration) have been re‑implemented in C++ (see
+# ``cpp/simulator.cpp``) and exposed as the ``robot_trailer_sim_cpp`` module.
+# If the compiled extension is available we replace the pure‑Python classes
+# with the C++ versions so the rest of the codebase can continue to import
+# ``Simulator``, ``RobotParameters`` and ``RobotState`` from this module without
+# any changes.
+try:
+    from robot_trailer_sim_cpp import Simulator as _CppSimulator
+    from robot_trailer_sim_cpp import RobotParameters as _CppRobotParameters
+    from robot_trailer_sim_cpp import RobotState as _CppRobotState
+
+    # Preserve the original names for compatibility.
+    Simulator = _CppSimulator  # type: ignore
+    RobotParameters = _CppRobotParameters  # type: ignore
+    RobotState = _CppRobotState  # type: ignore
+    print("Using C++ simulator implementation for better performance.")
+except Exception:
+    # If the C++ extension cannot be imported (e.g., not built), fall back to
+    # the pure‑Python implementation defined above.
+    print("Falling back to pure-Python simulator implementation.  For better performance, build the C++ extension.")
+    pass

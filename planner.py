@@ -134,17 +134,23 @@ class HybridAStarPlanner:
             Ordered list of states from start to goal.  If no path is found,
             an empty list is returned.
         """
-        # Priority queue stores entries of the form (f, g, state, parent_key)
-        open_queue: List[Tuple[float, float, RobotState, Tuple[int, int, int, int] | None]] = []
+        # Priority queue stores entries of the form (f, g, tie_breaker, state, parent_key)
+        # ``tie_breaker`` is a monotonically increasing integer to ensure that
+        # entries are always comparable even when ``f`` and ``g`` are equal.
+        open_queue: List[Tuple[float, float, int, RobotState, Tuple[int, int, int, int] | None]] = []
         start_key = _discretize(start)
-        heapq.heappush(open_queue, ( _heuristic(start, goal), 0.0, start, None ))
+        _push_counter = 0  # local counter for tie‑breaking
+        heapq.heappush(open_queue, ( _heuristic(start, goal), 0.0, _push_counter, start, None ))
+        _push_counter += 1
 
         # Maps discretised state key to (g_cost, parent_key, RobotState)
         closed: Dict[Tuple[int, int, int, int], Tuple[float, Tuple[int, int, int, int] | None, RobotState]] = {}
         closed[start_key] = (0.0, None, start)
 
         while open_queue:
-            f, g, current, parent_key = heapq.heappop(open_queue)
+            # The third element is the tie‑breaker counter; we ignore it for
+            # algorithmic purposes.
+            f, g, _tie, current, parent_key = heapq.heappop(open_queue)
             current_key = _discretize(current)
 
             # Goal test – we consider the goal reached when the robot position
@@ -176,7 +182,8 @@ class HybridAStarPlanner:
                 if neighbor_key not in closed or tentative_g < closed[neighbor_key][0]:
                     closed[neighbor_key] = (tentative_g, current_key, neighbor)
                     f_cost = tentative_g + _heuristic(neighbor, goal)
-                    heapq.heappush(open_queue, (f_cost, tentative_g, neighbor, current_key))
+                    heapq.heappush(open_queue, (f_cost, tentative_g, _push_counter, neighbor, current_key))
+                    _push_counter += 1
             # End of neighbour loop
 
         # No path found.
@@ -261,3 +268,22 @@ def _rectangle_occupied_numba(
         if occupancy_grid[iy, ix]:
             return True
     return False
+
+# ---------------------------------------------------------------------------
+# Optional C++ accelerated implementation via pybind11
+# ---------------------------------------------------------------------------
+# The heavy‑weight planning calculations have been re‑implemented in C++ (see
+# ``cpp/planner.cpp``) and exposed as the ``robot_trailer_cpp`` module. If the
+# compiled extension is available we replace the pure‑Python ``HybridAStarPlanner``
+# with the C++ version so the rest of the codebase can continue to import
+# ``HybridAStarPlanner`` from this module without any changes.
+try:
+    from robot_trailer_cpp import HybridAStarPlanner as _CppPlanner
+    # Preserve the original name for compatibility.
+    HybridAStarPlanner = _CppPlanner  # type: ignore
+    print("Using C++ planner implementation for better performance.")
+except Exception:
+    # If the C++ extension cannot be imported (e.g., not built), fall back to
+    # the pure‑Python implementation defined above.
+    print("Falling back to pure-Python planner implementation.  For better performance, build the C++ extension.")
+    pass

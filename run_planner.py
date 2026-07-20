@@ -20,11 +20,26 @@ from planner import HybridAStarPlanner
 # Define a few simple control sets (must match those used in the visualiser)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Control sets (motion primitives) used by the planner.
+# ---------------------------------------------------------------------------
+# The existing sets are simple sequences useful for demos.  The new "dense"
+# set provides a broader sampling of left/right wheel velocity pairs, making the
+# planner applicable to a wider variety of start/goal configurations and obstacle
+# layouts.  It includes forward, reverse and turning motions.
 CONTROL_SETS = {
     "default": [(1.0, 1.0)] * 60 + [(0.5, 1.0)] * 50 + [(1.0, 1.0)] * 60,
     "slow_turn": [(0.5, 1.0)] * 80 + [(1.0, 0.5)] * 80,
     "sharp_turn": [(0.2, 1.0)] * 40 + [(1.0, 0.2)] * 40,
     "zigzag": [(1.0, 0.5)] * 30 + [(0.5, 1.0)] * 30 + [(1.0, 0.5)] * 30 + [(0.5, 1.0)] * 30,
+    # "dense" provides a grid of velocity pairs covering forward, reverse and
+    # turning motions.  The step size (0.5) yields a manageable number of
+    # primitives while still offering good coverage.
+    "dense": [
+        (vl, vr)
+        for vl in np.linspace(-1.0, 1.0, 9)  # -1.0, -0.75, ..., 1.0
+        for vr in np.linspace(-1.0, 1.0, 9)
+    ],
 }
 
 
