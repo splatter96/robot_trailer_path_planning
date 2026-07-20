@@ -24,6 +24,10 @@ graphviz = "*"
 numba = ">=0.66.0,<0.67"
 pybind11 = ">=3.0.3,<4"
 valgrind = "==3.26.0"
+gcc = ">=15.2.0,<15.3"
+cmake = ">=4.4.0,<5"
+make = ">=4.4.1,<5"
+cxx-compiler = ">=1.0.0,<2"
 
 [tool.pixi.tasks]
 #Build the C++ pybind11 extension using CMake.  This creates a shared library

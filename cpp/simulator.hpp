@@ -26,6 +26,10 @@ struct RobotState {
     double y;            // world y position (m)
     double theta_robot;  // robot heading (rad)
     double beta;         // articulation angle (rad)
+    // Trailer pose – cached here for quick access after each step.
+    double trailer_x = 0.0;      // trailer world x (m)
+    double trailer_y = 0.0;      // trailer world y (m)
+    double theta_trailer = 0.0;  // trailer heading (rad)
 };
 
 // ---------------------------------------------------------------------------

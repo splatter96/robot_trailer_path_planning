@@ -46,6 +46,11 @@ struct RobotState {
     double y;            // world y position (m)
     double theta_robot;  // robot heading (rad)
     double beta;         // articulation angle (rad)
+
+    // Trailer pose – cached here for quick access after each step.
+    double trailer_x = 0.0;      // trailer world x (m)
+    double trailer_y = 0.0;      // trailer world y (m)
+    double theta_trailer = 0.0;  // trailer heading (rad)
 };
 
 /**
@@ -77,13 +82,19 @@ public:
     /** Single Euler integration step. */
     RobotState step(const RobotState &state, double v_left, double v_right,
                     double dt) const {
+        // Compute derivatives using cached twist.
         auto [x_dot, y_dot, theta_dot, beta_dot] =
             derivatives(state, v_left, v_right);
         RobotState next;
+        // Update robot base pose.
         next.x = state.x + x_dot * dt;
         next.y = state.y + y_dot * dt;
         next.theta_robot = wrap_angle(state.theta_robot + theta_dot * dt);
         next.beta = wrap_angle(state.beta + beta_dot * dt);
+        // Compute and cache trailer pose based on the updated robot state.
+        next.theta_trailer = next.theta_robot - next.beta;
+        next.trailer_x = next.x - params_.drawbar_length * std::cos(next.theta_trailer);
+        next.trailer_y = next.y - params_.drawbar_length * std::sin(next.theta_trailer);
         return next;
     }
 
@@ -139,7 +150,11 @@ PYBIND11_MODULE(robot_trailer_sim_cpp, m) {
         .def_readwrite("x", &RobotState::x)
         .def_readwrite("y", &RobotState::y)
         .def_readwrite("theta_robot", &RobotState::theta_robot)
-        .def_readwrite("beta", &RobotState::beta);
+        .def_readwrite("beta", &RobotState::beta)
+        // expose cached trailer pose fields (read‑only from Python side is fine)
+        .def_readwrite("trailer_x", &RobotState::trailer_x)
+        .def_readwrite("trailer_y", &RobotState::trailer_y)
+        .def_readwrite("theta_trailer", &RobotState::theta_trailer);
 
     py::class_<Simulator>(m, "Simulator")
         .def(py::init<const RobotParameters &>())

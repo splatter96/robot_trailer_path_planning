@@ -389,31 +389,15 @@ private:
         }
 
         // ----- Trailer centre -----
-        auto [tx, ty, ttheta] = simulator_.trailer_pose(state);
-        int ix_t = static_cast<int>(std::floor((tx - ox_) * inv_res_));
-        int iy_t = static_cast<int>(std::floor((ty - oy_) * inv_res_));
+        // Use the cached trailer pose stored in the RobotState.
+        int ix_t = static_cast<int>(std::floor((state.trailer_x - ox_) * inv_res_));
+        int iy_t = static_cast<int>(std::floor((state.trailer_y - oy_) * inv_res_));
         if (ix_t >= 0 && iy_t >= 0 && ix_t < cols_ && iy_t < rows_) {
             if (dist(iy_t, ix_t) < clearance_threshold_) return true;
         }
         return false;
     }
 
-    //  bool collides(const RobotState &state) const {
-    //     // Robot chassis
-    //     if (rectangle_occupied(state.x, state.y, state.theta_robot,
-    //                            simulator_.params().robot_length,
-    //                            simulator_.params().robot_width,
-    //                            occupancy_grid_, inv_res_, ox_, oy_, rows_, cols_))
-    //         return true;
-    //     // Trailer
-    //     auto [tx, ty, ttheta] = simulator_.trailer_pose(state);
-    //     if (rectangle_occupied(tx, ty, ttheta,
-    //                            simulator_.params().trailer_length,
-    //                            simulator_.params().trailer_width,
-    //                            occupancy_grid_, inv_res_, ox_, oy_, rows_, cols_))
-    //         return true;
-    //     return false;
-    // }
 };
 
 PYBIND11_MODULE(robot_trailer_cpp, m) {
