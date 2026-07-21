@@ -12,6 +12,8 @@
 // is independent of pybind11. Bindings are provided in bindings.cpp.
 class HybridAStarPlanner {
 public:
+    // The planner needs to initialise the simulator's derivative cache.
+    // The simulator is stored as a const reference; cache members are mutable.
     HybridAStarPlanner(const Simulator &sim,
                        const std::vector<std::pair<double, double>> &control_set,
                        const std::vector<uint8_t> &occupancy_grid = std::vector<uint8_t>(),

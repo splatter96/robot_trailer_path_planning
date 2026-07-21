@@ -290,6 +290,9 @@ struct StateIndexMap {
     }
 };
 
+// Produce a StateKey using the cached discretized values stored in the state.
+// If the indices have not been initialised (negative), fall back to the
+// original rounding calculation to preserve correctness.
 static inline StateKey discretize(const RobotState &s, double pos_res = 0.1,
           double ang_res = M_PI / 36.0) { // 5 degrees
     int xi = static_cast<int>(std::round(s.x / pos_res));
@@ -360,6 +363,9 @@ HybridAStarPlanner::HybridAStarPlanner(const Simulator &sim, const std::vector<s
                                      simulator_.params().trailer_length,
                                      simulator_.params().trailer_width});
 
+    // Initialise the simulator's derivative cache for the known control set.
+    // This allows the planner to use a fast lookup during the search.
+    simulator_.init_derivative_cache(control_set_);
     if (rows_ > 0 && cols_ > 0) {
         distance_grid_.assign(rows_ * cols_, INF_COST);
         std::queue<std::pair<int, int>> q;
@@ -471,11 +477,9 @@ std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const 
         }
 
         // Expand neighbours by applying each control primitive.
-        for (const auto &ctrl : control_set_) {
-            double v_left = ctrl.first;
-            double v_right = ctrl.second;
-            // Simulate one time step with the given wheel velocities.
-            RobotState neighbor = simulator_.step(current, v_left, v_right, dt_);
+        for (size_t ctrl_idx = 0; ctrl_idx < control_set_.size(); ++ctrl_idx) {
+            // Use the cached derivative step for the given control index.
+            RobotState neighbor = simulator_.step_cached(current, ctrl_idx, dt_);
             // Discard states that collide with obstacles (if an occupancy grid is present).
             if (has_occupancy && collides(neighbor)) continue;
 
@@ -526,19 +530,27 @@ int HybridAStarPlanner::cols() const { return cols_; }
 
 bool HybridAStarPlanner::collides(const RobotState &state) const {
     if (rows_ == 0 || cols_ == 0) return false;
-    // Use the pre‑computed distance map.
+    // Use the pre‑computed distance map. Cache grid indices inside the state
+    // to avoid recomputing floor() operations for every collision check.
+    // The indices are mutable, so they can be updated even though `state` is
+    // passed as a const reference.
+
     // ----- Robot centre -----
-    int ix = static_cast<int>(std::floor((state.x - ox_) * inv_res_));
-    int iy = static_cast<int>(std::floor((state.y - oy_) * inv_res_));
-    if (ix >= 0 && iy >= 0 && ix < cols_ && iy < rows_) {
-        if (distance_grid_[iy * cols_ + ix] < clearance_threshold_) return true;
+    if (state.ix < 0 || state.iy < 0) {
+        state.ix = static_cast<int>(std::floor((state.x - ox_) * inv_res_));
+        state.iy = static_cast<int>(std::floor((state.y - oy_) * inv_res_));
+    }
+    if (state.ix >= 0 && state.iy >= 0 && state.ix < cols_ && state.iy < rows_) {
+        if (distance_grid_[state.iy * cols_ + state.ix] < clearance_threshold_) return true;
     }
 
     // ----- Trailer centre -----
-    int ix_t = static_cast<int>(std::floor((state.trailer_x - ox_) * inv_res_));
-    int iy_t = static_cast<int>(std::floor((state.trailer_y - oy_) * inv_res_));
-    if (ix_t >= 0 && iy_t >= 0 && ix_t < cols_ && iy_t < rows_) {
-        if (distance_grid_[iy_t * cols_ + ix_t] < clearance_threshold_) return true;
+    if (state.ix_t < 0 || state.iy_t < 0) {
+        state.ix_t = static_cast<int>(std::floor((state.trailer_x - ox_) * inv_res_));
+        state.iy_t = static_cast<int>(std::floor((state.trailer_y - oy_) * inv_res_));
+    }
+    if (state.ix_t >= 0 && state.iy_t >= 0 && state.ix_t < cols_ && state.iy_t < rows_) {
+        if (distance_grid_[state.iy_t * cols_ + state.ix_t] < clearance_threshold_) return true;
     }
     return false;
 }
