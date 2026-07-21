@@ -36,8 +36,6 @@ PYBIND11_MODULE(robot_trailer_sim_cpp, m) {
     py::class_<Simulator>(m, "Simulator")
         .def(py::init<const RobotParameters &>())
         .def("wheel_velocities_to_twist", &Simulator::wheel_velocities_to_twist)
-        .def("derivatives", &Simulator::derivatives)
-        .def("step", &Simulator::step)
         .def("trailer_pose", &Simulator::trailer_pose)
         .def("simulate", &Simulator::simulate)
         .def_property_readonly("params", &Simulator::params);

@@ -1,7 +1,3 @@
-// Header declaring shared data structures and the Simulator class.
-// This header is used by both simulator.cpp (which provides the definitions)
-// and planner.cpp (which needs the declarations).
-
 #pragma once
 
 #include <tuple>
@@ -9,9 +5,6 @@
 #include <array>
 #include <cmath>
 
-// ---------------------------------------------------------------------------
-// Data structures – identical to those defined in simulator.cpp.
-// ---------------------------------------------------------------------------
 struct RobotParameters {
     double wheel_base;          // distance between wheels [m]
     double drawbar_length;      // hitch to trailer axle [m]
@@ -42,15 +35,10 @@ struct RobotState {
     mutable int iy_t = -1; // trailer centre grid y index
 };
 
-// ---------------------------------------------------------------------------
-// Simulator class declaration – definitions are in simulator.cpp.
-// ---------------------------------------------------------------------------
 class Simulator {
 public:
     explicit Simulator(const RobotParameters &params);
     std::pair<double, double> wheel_velocities_to_twist(double v_left, double v_right) const;
-    std::tuple<double, double, double, double> derivatives(const RobotState &state, double v_left, double v_right) const;
-    RobotState step(const RobotState &state, double v_left, double v_right, double dt) const;
     std::tuple<double, double, double> trailer_pose(const RobotState &state) const;
     const RobotParameters &params() const;
     std::vector<RobotState> simulate(const RobotState &start, const std::vector<std::pair<double, double>> &controls, double dt) const;
@@ -60,14 +48,13 @@ public:
     // The planner can initialise the cache once and then use `step_cached`
     // for fast state propagation during the search.
     // ---------------------------------------------------------------------
-    // Initialise the derivative cache. This method can be called on a const
-    // Simulator because the cache members are declared mutable.
     void init_derivative_cache(const std::vector<std::pair<double, double>> &control_set,
                                double ang_res = M_PI / 36.0) const;
     // Initialise the discretised angular indices inside a RobotState.
-    // This should be called for any state that will be used with step_cached.
-    void init_state(RobotState &state) const;
+    void cache_discretization(RobotState &state) const;
     RobotState step_cached(const RobotState &state, size_t control_idx, double dt) const;
+
+    void set_grid_resolution(double res) const { pos_res_ = res; }
 
 private:
     RobotParameters params_;
@@ -78,5 +65,6 @@ private:
     mutable int n_beta_ = 0;
     mutable double ang_res_ = M_PI / 36.0;
     mutable double inv_res_ = 0.0; // reciprocal of ang_res_ for fast index conversion
+    mutable double pos_res_ = 0.1;
     mutable std::vector<std::pair<double, double>> cached_control_set_;
 };

@@ -291,12 +291,12 @@ struct StateIndexMap {
 };
 
 // Produce a StateKey using the cached discretized values stored in the state.
-// If the indices have not been initialised (negative), fall back to the
-// original rounding calculation to preserve correctness.
-static inline StateKey discretize(const RobotState &s, double pos_res = 0.1,
+static inline StateKey get_key(const RobotState &s, double pos_res = 0.1,
           double ang_res = M_PI / 36.0) { // 5 degrees
-    int xi = static_cast<int>(std::round(s.x / pos_res));
-    int yi = static_cast<int>(std::round(s.y / pos_res));
+    // int xi = static_cast<int>(std::round(s.x / pos_res));
+    // int yi = static_cast<int>(std::round(s.y / pos_res));
+    int xi = s.ix;
+    int yi = s.iy;
     int ti = static_cast<int>(std::round(s.theta_robot / ang_res));
     int bi = static_cast<int>(std::round(s.beta / ang_res));
     return {xi, yi, ti, bi};
@@ -326,20 +326,15 @@ static bool rectangle_occupied(double cx, double cy, double heading, double leng
     return false;
 }
 
-// ---------------------------------------------------------------------------
-// Planner class definition
-// ---------------------------------------------------------------------------
-// Implementations of HybridAStarPlanner methods (defined in planner.hpp)
-
 HybridAStarPlanner::HybridAStarPlanner(const Simulator &sim, const std::vector<std::pair<double, double>> &control_set,
-                      const std::vector<uint8_t> &occupancy_grid,
-                      int rows, int cols,
-                      double grid_resolution,
-                      std::pair<double, double> grid_origin,
-                      double dt)
-    : simulator_(sim), control_set_(control_set), dt_(dt), occupancy_grid_(occupancy_grid),
-      grid_resolution_(grid_resolution), ox_(grid_origin.first), oy_(grid_origin.second),
-      rows_(rows), cols_(cols) {
+                                            const std::vector<uint8_t> &occupancy_grid,
+                                            int rows, int cols,
+                                            double grid_resolution,
+                                            std::pair<double, double> grid_origin,
+                                            double dt)
+        : simulator_(sim), control_set_(control_set), dt_(dt), occupancy_grid_(occupancy_grid),
+            grid_resolution_(grid_resolution), ox_(grid_origin.first), oy_(grid_origin.second),
+            rows_(rows), cols_(cols) {
 
     if (rows_ > 0 && cols_ > 0 && occupancy_grid_.size() == static_cast<size_t>(rows_ * cols_)) {
         inv_res_ = 1.0 / grid_resolution_;
@@ -349,19 +344,13 @@ HybridAStarPlanner::HybridAStarPlanner(const Simulator &sim, const std::vector<s
         occupancy_grid_.clear();
     }
 
-    // robot_lookup_ = std::make_unique<FootprintLookup>(
-    //     simulator_.params().robot_length,
-    //     simulator_.params().robot_width,
-    //     grid_resolution_);
-    // trailer_lookup_ = std::make_unique<FootprintLookup>(
-    //     simulator_.params().trailer_length,
-    //     simulator_.params().trailer_width,
-    //     grid_resolution_);
-
     clearance_threshold_ = std::max({simulator_.params().robot_length,
                                      simulator_.params().robot_width,
                                      simulator_.params().trailer_length,
                                      simulator_.params().trailer_width});
+
+    // Ensure the simulator uses the same positional resolution as the planner.
+    simulator_.set_grid_resolution(grid_resolution_);
 
     // Initialise the simulator's derivative cache for the known control set.
     // This allows the planner to use a fast lookup during the search.
@@ -420,7 +409,8 @@ std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const 
     const std::size_t open_reserve = 262144; // Pre‑allocate space for the heap (tuneable).
 
     // Discretise the start state to obtain a unique key for the closed list.
-    auto start_key = discretize(start);
+    // Use the planner's grid resolution for consistent discretisation.
+    auto start_key = get_key(start, grid_resolution_);
 
     // ---------------------------------------------------------------------
     // Optional reverse‑distance heuristic preparation
@@ -484,7 +474,8 @@ std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const 
             if (has_occupancy && collides(neighbor)) continue;
 
             // Discretise the neighbour to obtain a lookup key.
-            auto neighbor_key = discretize(neighbor);
+            // Discretise using the same grid resolution as the planner.
+            auto neighbor_key = get_key(neighbor, grid_resolution_);
             double tentative_g = g + dt_; // Cost to reach the neighbour.
             int existing_idx = state_index.find(neighbor_key);
 
@@ -530,29 +521,15 @@ int HybridAStarPlanner::cols() const { return cols_; }
 
 bool HybridAStarPlanner::collides(const RobotState &state) const {
     if (rows_ == 0 || cols_ == 0) return false;
-    // Use the pre‑computed distance map. Cache grid indices inside the state
-    // to avoid recomputing floor() operations for every collision check.
-    // The indices are mutable, so they can be updated even though `state` is
-    // passed as a const reference.
 
     // ----- Robot centre -----
-    if (state.ix < 0 || state.iy < 0) {
-        state.ix = static_cast<int>(std::floor((state.x - ox_) * inv_res_));
-        state.iy = static_cast<int>(std::floor((state.y - oy_) * inv_res_));
-    }
     if (state.ix >= 0 && state.iy >= 0 && state.ix < cols_ && state.iy < rows_) {
         if (distance_grid_[state.iy * cols_ + state.ix] < clearance_threshold_) return true;
     }
 
     // ----- Trailer centre -----
-    if (state.ix_t < 0 || state.iy_t < 0) {
-        state.ix_t = static_cast<int>(std::floor((state.trailer_x - ox_) * inv_res_));
-        state.iy_t = static_cast<int>(std::floor((state.trailer_y - oy_) * inv_res_));
-    }
     if (state.ix_t >= 0 && state.iy_t >= 0 && state.ix_t < cols_ && state.iy_t < rows_) {
         if (distance_grid_[state.iy_t * cols_ + state.ix_t] < clearance_threshold_) return true;
     }
     return false;
 }
-
-// Bindings moved to cpp/bindings.cpp

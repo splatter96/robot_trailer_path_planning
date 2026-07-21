@@ -1,26 +1,10 @@
-/**
- * C++ implementation of the robot‑trailer kinematic simulator.
- *
- * The original pure‑Python implementation (see simulator.py) performed all
- * calculations in Python and used Numba for JIT acceleration.  To further
- * reduce overhead – especially when evaluating many motion primitives – the
- * core arithmetic is now implemented in C++ and exposed to Python via
- * pybind11.  The public API mirrors the Python version so existing code can be
- * switched by simply importing the new module.
- */
-
 #include <cmath>
 #include <array>
-/** C++ implementation of the robot‑trailer kinematic simulator. */
 
 #include "simulator.hpp"
 
 /** Simple angle wrapping to the interval [-π, π]. */
-// Fast angle wrapping to the interval [-π, π].
-// The simulation updates angles by small increments, so a simple conditional
-// adjustment is sufficient and avoids the relatively expensive std::fmod.
 static inline double wrap_angle(double angle) {
-    // Bring the angle into the range [-π, π] by adding or subtracting 2π once.
     if (angle > M_PI) {
         angle -= 2.0 * M_PI;
     } else if (angle < -M_PI) {
@@ -31,8 +15,7 @@ static inline double wrap_angle(double angle) {
 
 // Convert a continuous angle to a discretised index using the pre‑computed
 // reciprocal of the angular resolution (inv_res_). The result is wrapped into
-// the range [0, n) where n is either n_theta_ or n_beta_. This function is
-// deliberately tiny so the compiler can inline it.
+// the range [0, n) 
 static inline int angle_to_index(double angle, double inv_res, int n) noexcept {
     int idx = static_cast<int>(std::floor(angle * inv_res + 0.5)); // round()
     // Ensure the index is positive before the modulo.
@@ -40,37 +23,12 @@ static inline int angle_to_index(double angle, double inv_res, int n) noexcept {
     return idx % n;
 }
 
-// Implementations of the methods declared in simulator.hpp
-
 Simulator::Simulator(const RobotParameters &params) : params_(params) {}
 
 std::pair<double, double> Simulator::wheel_velocities_to_twist(double v_left, double v_right) const {
     double v = 0.5 * (v_left + v_right);
     double omega = (v_right - v_left) / params_.wheel_base;
     return {v, omega};
-}
-
-std::tuple<double, double, double, double>
-Simulator::derivatives(const RobotState &state, double v_left, double v_right) const {
-    auto [v, omega] = wheel_velocities_to_twist(v_left, v_right);
-    double x_dot = v * std::cos(state.theta_robot);
-    double y_dot = v * std::sin(state.theta_robot);
-    double theta_dot = omega;
-    double beta_dot = omega - (v / params_.drawbar_length) * std::sin(state.beta);
-    return {x_dot, y_dot, theta_dot, beta_dot};
-}
-
-RobotState Simulator::step(const RobotState &state, double v_left, double v_right, double dt) const {
-    auto [x_dot, y_dot, theta_dot, beta_dot] = derivatives(state, v_left, v_right);
-    RobotState next;
-    next.x = state.x + x_dot * dt;
-    next.y = state.y + y_dot * dt;
-    next.theta_robot = wrap_angle(state.theta_robot + theta_dot * dt);
-    next.beta = wrap_angle(state.beta + beta_dot * dt);
-    next.theta_trailer = next.theta_robot - next.beta;
-    next.trailer_x = next.x - params_.drawbar_length * std::cos(next.theta_trailer);
-    next.trailer_y = next.y - params_.drawbar_length * std::sin(next.theta_trailer);
-    return next;
 }
 
 // ---------------------------------------------------------------------
@@ -116,16 +74,13 @@ void Simulator::init_derivative_cache(const std::vector<std::pair<double, double
 
 // Initialise the discretised angular indices inside a RobotState. This should be
 // called once for any state that will be used with step_cached.
-void Simulator::init_state(RobotState &state) const {
+void Simulator::cache_discretization(RobotState &state) const {
     // Angular discretisation (used for derivative cache lookup).
     state.theta_idx = angle_to_index(state.theta_robot, inv_res_, n_theta_);
     state.beta_idx  = angle_to_index(state.beta,        inv_res_, n_beta_);
 
     // Position discretisation for fast collision checking and state indexing.
-    // The planner uses a default positional resolution of 0.1 m. We store the
-    // rounded grid indices directly in the state so they can be reused without
-    // recomputing `std::round` each time.
-    constexpr double pos_res = 0.1; // metres per grid cell (matches discretize())
+    double pos_res = pos_res_; // metres per grid cell
     state.ix   = static_cast<int>(std::round(state.x / pos_res));
     state.iy   = static_cast<int>(std::round(state.y / pos_res));
     state.ix_t = static_cast<int>(std::round(state.trailer_x / pos_res));
@@ -133,9 +88,6 @@ void Simulator::init_state(RobotState &state) const {
 }
 
 RobotState Simulator::step_cached(const RobotState &state, size_t control_idx, double dt) const {
-    // If the cache has not been initialised (or the index is out of range),
-    // fall back to the regular step implementation. This ensures safe
-    // behaviour even if the planner forgets to initialise the cache.
     if (derivative_cache_.empty() || control_idx >= cached_control_set_.size()) {
         return state; // No movement – safe fallback.
     }
@@ -167,7 +119,7 @@ RobotState Simulator::step_cached(const RobotState &state, size_t control_idx, d
     next.trailer_y = next.y - params_.drawbar_length * sin_trailer;
 
     // Update cached angular indices for the new state.
-    init_state(next);
+    cache_discretization(next);
     return next;
 }
 
@@ -185,8 +137,8 @@ std::vector<RobotState> Simulator::simulate(const RobotState &start,
     states.reserve(controls.size() + 1);
     states.push_back(start);
     RobotState cur = start;
-    for (const auto &c : controls) {
-        cur = step(cur, c.first, c.second, dt);
+    for (size_t ctrl_idx = 0; ctrl_idx < controls.size(); ++ctrl_idx) {
+        cur = step_cached(cur, ctrl_idx, dt);
         states.push_back(cur);
     }
     return states;
