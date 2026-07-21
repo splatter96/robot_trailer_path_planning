@@ -13,13 +13,16 @@ find_package(pybind11 CONFIG REQUIRED)
 # Create the pybind11 module from the C++ source.
 pybind11_add_module(robot_trailer_sim_cpp
     cpp/simulator.cpp
+    cpp/planner.cpp  # Added to provide HybridAStarPlanner symbols for this module
+    cpp/bindings.cpp
 )
 
 # Build a combined module that provides both the simulator and the planner.
 pybind11_add_module(robot_trailer_cpp
     cpp/simulator.cpp
     cpp/planner.cpp
-    cpp/footprint_lookup.cpp
+    #cpp/footprint_lookup.cpp
+    cpp/bindings.cpp
 )
 
 target_compile_options(robot_trailer_cpp PRIVATE
@@ -41,3 +44,17 @@ set_target_properties(robot_trailer_cpp PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# Native runner for the planner (pure C++)
+add_executable(run_planner_native
+    cpp/run_planner_native.cpp
+    cpp/simulator.cpp
+    cpp/planner.cpp
+    #cpp/footprint_lookup.cpp
+)
+
+target_compile_features(run_planner_native PRIVATE cxx_std_17)
+target_compile_options(run_planner_native PRIVATE -O2 -g)
+
+set_target_properties(run_planner_native PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)

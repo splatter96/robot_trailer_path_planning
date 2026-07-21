@@ -4,8 +4,6 @@
 
 #pragma once
 
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
 #include <tuple>
 #include <vector>
 
@@ -43,6 +41,7 @@ public:
     RobotState step(const RobotState &state, double v_left, double v_right, double dt) const;
     std::tuple<double, double, double> trailer_pose(const RobotState &state) const;
     const RobotParameters &params() const;
+    std::vector<RobotState> simulate(const RobotState &start, const std::vector<std::pair<double, double>> &controls, double dt) const;
 
 private:
     RobotParameters params_;
