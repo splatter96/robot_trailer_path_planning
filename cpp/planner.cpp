@@ -118,6 +118,100 @@ struct StateKey {
     }
 };
 
+// ---------------------------------------------------------------------------
+// Internal data structures for the A* search.
+// ---------------------------------------------------------------------------
+// Closed list entry storing cost information and the associated state.
+struct ClosedVal {
+    double g;          // Cost from start to this node.
+    double f;          // g + heuristic.
+    int parent;        // Index of parent node in the nodes vector.
+    RobotState state;  // The robot state at this node.
+    int heap_index;    // Position in the binary heap (or -1 if not in heap).
+    bool expanded;     // Whether the node has been expanded.
+};
+
+// Simple binary min‑heap for the open list. It operates on indices into the
+// `nodes` vector and uses the `ClosedVal::f` (and then `g`) for ordering.
+struct OpenHeap {
+    std::vector<int> heap;                 // Heap of node indices.
+    std::vector<ClosedVal> *nodes;         // Back‑reference to the node storage.
+
+    // `reserve_size` allows the caller to pre‑allocate the heap capacity.
+    explicit OpenHeap(std::vector<ClosedVal> *nodes_ptr, size_t reserve_size = 0)
+        : nodes(nodes_ptr) {
+        if (reserve_size) heap.reserve(reserve_size);
+    }
+
+    bool empty() const { return heap.empty(); }
+
+    void swap_positions(int i, int j) {
+        int a = heap[i];
+        int b = heap[j];
+        heap[i] = b;
+        heap[j] = a;
+        (*nodes)[a].heap_index = j;
+        (*nodes)[b].heap_index = i;
+    }
+
+    bool compare(int i, int j) const {
+        const ClosedVal &a = (*nodes)[heap[i]];
+        const ClosedVal &b = (*nodes)[heap[j]];
+        if (a.f != b.f) return a.f < b.f;
+        return a.g < b.g;
+    }
+
+    void sift_up(int pos) {
+        while (pos > 0) {
+            int parent = (pos - 1) / 2;
+            if (compare(pos, parent)) {
+                swap_positions(pos, parent);
+                pos = parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    void sift_down(int pos) {
+        int n = static_cast<int>(heap.size());
+        while (true) {
+            int left = 2 * pos + 1;
+            int right = 2 * pos + 2;
+            int smallest = pos;
+            if (left < n && compare(left, smallest)) smallest = left;
+            if (right < n && compare(right, smallest)) smallest = right;
+            if (smallest == pos) break;
+            swap_positions(pos, smallest);
+            pos = smallest;
+        }
+    }
+
+    void push(int node_index) {
+        heap.push_back(node_index);
+        (*nodes)[node_index].heap_index = static_cast<int>(heap.size() - 1);
+        sift_up(static_cast<int>(heap.size() - 1));
+    }
+
+    int pop_top() {
+        int top = heap[0];
+        int last = heap.back();
+        heap.pop_back();
+        if (!heap.empty()) {
+            heap[0] = last;
+            (*nodes)[last].heap_index = 0;
+            sift_down(0);
+        }
+        (*nodes)[top].heap_index = -1;
+        return top;
+    }
+
+    void decrease_key(int node_index) {
+        int pos = (*nodes)[node_index].heap_index;
+        if (pos >= 0) sift_up(pos);
+    }
+};
+
 static inline uint64_t splitmix64(uint64_t x) {
     x += 0x9e3779b97f4a7c15ULL;
     x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -312,204 +406,117 @@ std::vector<double> HybridAStarPlanner::reverse_distance_map(const RobotState &g
 }
 
 std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const RobotState &goal) {
-    explored_.clear();
-    profiler_.reset();
-    Profiler::ScopedTimer total_timer(profiler_, "__total__");
-    const std::size_t open_reserve = 262144; // tuneable
+    // ---------------------------------------------------------------------
+    // Initialise search state
+    // ---------------------------------------------------------------------
+    explored_.clear();               // Reset the list of explored states.
+    profiler_.reset();               // Clear any previous profiling data.
+    const std::size_t open_reserve = 262144; // Pre‑allocate space for the heap (tuneable).
+
+    // Discretise the start state to obtain a unique key for the closed list.
     auto start_key = discretize(start);
-    std::vector<double> rev_dist;
+
+    // ---------------------------------------------------------------------
+    // Optional reverse‑distance heuristic preparation
+    // ---------------------------------------------------------------------
+    std::vector<double> rev_dist;               // Cached reverse distance map.
     const std::vector<double>* rev_dist_ptr = nullptr;
     if (rows_ > 0 && cols_ > 0) {
-        {
-            Profiler::ScopedTimer t_rev_dist(profiler_, "reverse_dist");
-            rev_dist = compute_reverse_dist(occupancy_grid_, rows_, cols_, grid_resolution_, {ox_, oy_}, goal);
-        }
+        // Compute a distance‑to‑goal field on the occupancy grid.
+        rev_dist = compute_reverse_dist(occupancy_grid_, rows_, cols_, grid_resolution_, {ox_, oy_}, goal);
         rev_dist_ptr = &rev_dist;
     }
     const bool has_occupancy = (rows_ > 0 && cols_ > 0);
 
-    struct ClosedVal { double g; double f; int parent; RobotState state; int heap_index; bool expanded; };
-    std::vector<ClosedVal> nodes;
+    // ---------------------------------------------------------------------
+    // Data structures for the A* algorithm
+    // ---------------------------------------------------------------------
+    std::vector<ClosedVal> nodes;               // Closed list entries.
     nodes.reserve(32768);
-    StateIndexMap state_index(1 << 22);
+    StateIndexMap state_index(1 << 22);         // Fast lookup from discretised state to node index.
+    OpenHeap open_list(&nodes, open_reserve);   // Open list (binary min‑heap).
 
-        struct OpenHeap {
-            std::vector<int> heap;
-            std::vector<ClosedVal> *nodes;
+    // Initialise the start node and push it onto the open list.
+    double start_f = heuristic(start, goal, rev_dist_ptr, rows_, cols_, grid_resolution_, {ox_, oy_});
+    nodes.push_back(ClosedVal{0.0, start_f, -1, start, -1, false});
+    state_index.insert(start_key, 0);
+    open_list.push(0);
 
-            explicit OpenHeap(std::vector<ClosedVal> *nodes_ptr) : nodes(nodes_ptr) {
-                heap.reserve(open_reserve);
+    const double goal_thresh_sqr = 0.2 * 0.2; // Goal proximity threshold (squared meters).
+
+    // ---------------------------------------------------------------------
+    // Main A* loop – expand the most promising node until the goal is reached
+    // or the open list is exhausted.
+    // ---------------------------------------------------------------------
+    while (!open_list.empty()) {
+        // Pop the node with the lowest f‑cost.
+        int current_idx = open_list.pop_top();
+        ClosedVal &current_node = nodes[current_idx];
+        current_node.expanded = true;          // Mark as expanded to avoid re‑expansion.
+        RobotState current = current_node.state;
+        double g = current_node.g;             // Cost from start to this node.
+        explored_.push_back(current);
+
+        // Goal test – if within the threshold, reconstruct the path.
+        if ((current.x - goal.x) * (current.x - goal.x) +
+            (current.y - goal.y) * (current.y - goal.y) < goal_thresh_sqr) {
+            std::vector<RobotState> path;
+            int back_idx = current_idx;
+            while (back_idx >= 0) {
+                path.push_back(nodes[back_idx].state);
+                back_idx = nodes[back_idx].parent;
             }
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
 
-            bool empty() const { return heap.empty(); }
+        // Expand neighbours by applying each control primitive.
+        for (const auto &ctrl : control_set_) {
+            double v_left = ctrl.first;
+            double v_right = ctrl.second;
+            // Simulate one time step with the given wheel velocities.
+            RobotState neighbor = simulator_.step(current, v_left, v_right, dt_);
+            // Discard states that collide with obstacles (if an occupancy grid is present).
+            if (has_occupancy && collides(neighbor)) continue;
 
-            void swap_positions(int i, int j) {
-                int a = heap[i];
-                int b = heap[j];
-                heap[i] = b;
-                heap[j] = a;
-                (*nodes)[a].heap_index = j;
-                (*nodes)[b].heap_index = i;
-            }
+            // Discretise the neighbour to obtain a lookup key.
+            auto neighbor_key = discretize(neighbor);
+            double tentative_g = g + dt_; // Cost to reach the neighbour.
+            int existing_idx = state_index.find(neighbor_key);
 
-            bool compare(int i, int j) const {
-                const ClosedVal &a = (*nodes)[heap[i]];
-                const ClosedVal &b = (*nodes)[heap[j]];
-                if (a.f != b.f) return a.f < b.f;
-                return a.g < b.g;
-            }
-
-            void sift_up(int pos) {
-                while (pos > 0) {
-                    int parent = (pos - 1) / 2;
-                    if (compare(pos, parent)) {
-                        swap_positions(pos, parent);
-                        pos = parent;
-                    } else {
-                        break;
-                    }
-                }
-            }
-
-            void sift_down(int pos) {
-                int n = static_cast<int>(heap.size());
-                while (true) {
-                    int left = 2 * pos + 1;
-                    int right = 2 * pos + 2;
-                    int smallest = pos;
-                    if (left < n && compare(left, smallest)) smallest = left;
-                    if (right < n && compare(right, smallest)) smallest = right;
-                    if (smallest == pos) break;
-                    swap_positions(pos, smallest);
-                    pos = smallest;
-                }
-            }
-
-            void push(int node_index) {
-                heap.push_back(node_index);
-                (*nodes)[node_index].heap_index = static_cast<int>(heap.size() - 1);
-                sift_up(static_cast<int>(heap.size() - 1));
-            }
-
-            int pop_top() {
-                int top = heap[0];
-                int last = heap.back();
-                heap.pop_back();
-                if (!heap.empty()) {
-                    heap[0] = last;
-                    (*nodes)[last].heap_index = 0;
-                    sift_down(0);
-                }
-                (*nodes)[top].heap_index = -1;
-                return top;
-            }
-
-            void decrease_key(int node_index) {
-                int pos = (*nodes)[node_index].heap_index;
-                if (pos >= 0) sift_up(pos);
-            }
-        } open_list(&nodes);
-
-        double start_f = heuristic(start, goal, rev_dist_ptr, rows_, cols_, grid_resolution_, {ox_, oy_});
-        nodes.push_back(ClosedVal{0.0, start_f, -1, start, -1, false});
-        state_index.insert(start_key, 0);
-        open_list.push(0);
-
-        const double goal_thresh_sqr = 0.2 * 0.2;
-
-        while (!open_list.empty()) {
-            int current_idx;
-            {
-                Profiler::ScopedTimer t_heap(profiler_, "heap.pop");
-                current_idx = open_list.pop_top();
-            }
-            ClosedVal &current_node = nodes[current_idx];
-            current_node.expanded = true;
-            RobotState current = current_node.state;
-            double g = current_node.g;
-            explored_.push_back(current);
-
-            if ((current.x - goal.x) * (current.x - goal.x) + (current.y - goal.y) * (current.y - goal.y) < goal_thresh_sqr) {
-                std::vector<RobotState> path;
-                int back_idx = current_idx;
-                while (back_idx >= 0) {
-                    path.push_back(nodes[back_idx].state);
-                    back_idx = nodes[back_idx].parent;
-                }
-                std::reverse(path.begin(), path.end());
-                return path;
-            }
-
-            for (const auto &ctrl : control_set_) {
-                double v_left = ctrl.first;
-                double v_right = ctrl.second;
-                {
-                    Profiler::ScopedTimer t_step(profiler_, "sim.step");
-                }
-                RobotState neighbor = simulator_.step(current, v_left, v_right, dt_);
-                {
-                    Profiler::ScopedTimer t_coll(profiler_, "collides");
-                    if (has_occupancy && collides(neighbor)) continue;
-                }
-                {
-                    Profiler::ScopedTimer t_disc(profiler_, "discretize");
-                }
-                auto neighbor_key = discretize(neighbor);
-                double tentative_g = g + dt_;
-                Profiler::ScopedTimer t_state_find(profiler_, "state.find");
-                int existing_idx = state_index.find(neighbor_key);
-                if (existing_idx < 0) {
-                    double f_cost;
-                    {
-                        Profiler::ScopedTimer t_h(profiler_, "heuristic");
-                        f_cost = tentative_g + heuristic(neighbor, goal, rev_dist_ptr, rows_, cols_, grid_resolution_, {ox_, oy_});
-                    }
-                    int neighbor_idx = static_cast<int>(nodes.size());
-                    {
-                        Profiler::ScopedTimer t_node_push(profiler_, "nodes.push");
-                        nodes.push_back(ClosedVal{tentative_g, f_cost, current_idx, neighbor, -1, false});
-                    }
-                    {
-                        Profiler::ScopedTimer t_state_emplace(profiler_, "state.emplace");
-                        state_index.insert(neighbor_key, neighbor_idx);
-                    }
-                    {
-                        Profiler::ScopedTimer t_qpush(profiler_, "queue.push");
+            if (existing_idx < 0) {
+                // New state – compute f‑cost and add to both closed list and open list.
+                double f_cost = tentative_g + heuristic(neighbor, goal, rev_dist_ptr, rows_, cols_, grid_resolution_, {ox_, oy_});
+                int neighbor_idx = static_cast<int>(nodes.size());
+                nodes.push_back(ClosedVal{tentative_g, f_cost, current_idx, neighbor, -1, false});
+                state_index.insert(neighbor_key, neighbor_idx);
+                open_list.push(neighbor_idx);
+            } else {
+                // Existing state – possibly improve its cost.
+                int neighbor_idx = existing_idx;
+                ClosedVal &neighbor_node = nodes[neighbor_idx];
+                if (tentative_g < neighbor_node.g) {
+                    double f_cost = tentative_g + heuristic(neighbor, goal, rev_dist_ptr, rows_, cols_, grid_resolution_, {ox_, oy_});
+                    neighbor_node.g = tentative_g;
+                    neighbor_node.f = f_cost;
+                    neighbor_node.parent = current_idx;
+                    neighbor_node.state = neighbor;
+                    // Update the open list position based on the node's current state.
+                    if (neighbor_node.expanded) {
+                        neighbor_node.expanded = false;
                         open_list.push(neighbor_idx);
-                    }
-                } else {
-                    int neighbor_idx = existing_idx;
-                    ClosedVal &neighbor_node = nodes[neighbor_idx];
-                    if (tentative_g < neighbor_node.g) {
-                        double f_cost;
-                        {
-                            Profiler::ScopedTimer t_h(profiler_, "heuristic");
-                            f_cost = tentative_g + heuristic(neighbor, goal, rev_dist_ptr, rows_, cols_, grid_resolution_, {ox_, oy_});
-                        }
-                        neighbor_node.g = tentative_g;
-                        neighbor_node.f = f_cost;
-                        neighbor_node.parent = current_idx;
-                        neighbor_node.state = neighbor;
-                        if (neighbor_node.expanded) {
-                            neighbor_node.expanded = false;
-                            {
-                                Profiler::ScopedTimer t_qpush(profiler_, "queue.push");
-                                open_list.push(neighbor_idx);
-                            }
-                        } else if (neighbor_node.heap_index >= 0) {
-                            open_list.decrease_key(neighbor_idx);
-                        } else {
-                            {
-                                Profiler::ScopedTimer t_qpush(profiler_, "queue.push");
-                                open_list.push(neighbor_idx);
-                            }
-                        }
+                    } else if (neighbor_node.heap_index >= 0) {
+                        open_list.decrease_key(neighbor_idx);
+                    } else {
+                        open_list.push(neighbor_idx);
                     }
                 }
             }
         }
-        return {};
     }
+    // No path found – return an empty vector.
+    return {};
+}
 
 // Return a human-readable profiler summary string.
 std::string HybridAStarPlanner::profile_summary() const { return profiler_.summary_string(); }
