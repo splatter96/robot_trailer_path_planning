@@ -20,6 +20,7 @@ public:
                        int rows = 0,
                        int cols = 0,
                        double grid_resolution = 0.1,
+                       double angular_resolution = M_PI / 36.0,
                        std::pair<double, double> grid_origin = {0.0, 0.0},
                        double dt = 0.1);
 
@@ -43,6 +44,7 @@ private:
     std::vector<RobotState> explored_;
     std::vector<uint8_t> occupancy_grid_;
     double grid_resolution_;
+    double angular_resolution_;
     double ox_, oy_;
     double inv_res_ = 0.0;
     int rows_ = 0, cols_ = 0;

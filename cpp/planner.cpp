@@ -95,11 +95,9 @@ static inline double heuristic(const RobotState &s, const RobotState &goal,
                                double grid_resolution,
                                const std::pair<double, double> &grid_origin) {
     if (rev_dist && !rev_dist->empty()) {
-        double ox = grid_origin.first;
-        double oy = grid_origin.second;
         double inv_res = 1.0 / grid_resolution;
-        int ix = static_cast<int>(std::floor((s.x - ox) * inv_res));
-        int iy = static_cast<int>(std::floor((s.y - oy) * inv_res));
+        int ix = s.ix;
+        int iy = s.iy;
         if (ix >= 0 && iy >= 0 && ix < rev_cols && iy < rev_rows) {
             double d = (*rev_dist)[iy * rev_cols + ix];
             if (d < INF_COST) return d;
@@ -291,49 +289,25 @@ struct StateIndexMap {
 };
 
 // Produce a StateKey using the cached discretized values stored in the state.
-static inline StateKey get_key(const RobotState &s, double pos_res = 0.1,
-          double ang_res = M_PI / 36.0) { // 5 degrees
-    // int xi = static_cast<int>(std::round(s.x / pos_res));
-    // int yi = static_cast<int>(std::round(s.y / pos_res));
-    int xi = s.ix;
-    int yi = s.iy;
+static inline StateKey get_key(const RobotState &s, double pos_res, double ang_res) {
+    // Use cached grid indices for position if available; otherwise fall back to rounding.
+    int xi = (s.ix >= 0) ? s.ix : static_cast<int>(std::round(s.x / pos_res));
+    int yi = (s.iy >= 0) ? s.iy : static_cast<int>(std::round(s.y / pos_res));
     int ti = static_cast<int>(std::round(s.theta_robot / ang_res));
     int bi = static_cast<int>(std::round(s.beta / ang_res));
     return {xi, yi, ti, bi};
-}
-
-// Rectangle occupancy test – directly translated from the Numba version.
-static bool rectangle_occupied(double cx, double cy, double heading, double length,
-                               double width, const std::vector<uint8_t> &grid,
-                               double inv_res, double ox, double oy,
-                               int rows, int cols) {
-    double hl = length / 2.0;
-    double hw = width / 2.0;
-    double c = std::cos(heading);
-    double s = std::sin(heading);
-    for (int dx_sign : {1, -1}) {
-        for (int dy_sign : {1, -1}) {
-            double dx = hl * dx_sign;
-            double dy = hw * dy_sign;
-            double x = c * dx - s * dy + cx;
-            double y = s * dx + c * dy + cy;
-            int ix = static_cast<int>(std::floor((x - ox) * inv_res));
-            int iy = static_cast<int>(std::floor((y - oy) * inv_res));
-            if (ix < 0 || iy < 0 || ix >= cols || iy >= rows) continue;
-            if (grid[iy * cols + ix]) return true;
-        }
-    }
-    return false;
 }
 
 HybridAStarPlanner::HybridAStarPlanner(const Simulator &sim, const std::vector<std::pair<double, double>> &control_set,
                                             const std::vector<uint8_t> &occupancy_grid,
                                             int rows, int cols,
                                             double grid_resolution,
+                                            double angular_resolution,
                                             std::pair<double, double> grid_origin,
                                             double dt)
         : simulator_(sim), control_set_(control_set), dt_(dt), occupancy_grid_(occupancy_grid),
-            grid_resolution_(grid_resolution), ox_(grid_origin.first), oy_(grid_origin.second),
+            grid_resolution_(grid_resolution), angular_resolution_(angular_resolution),
+            ox_(grid_origin.first), oy_(grid_origin.second),
             rows_(rows), cols_(cols) {
 
     if (rows_ > 0 && cols_ > 0 && occupancy_grid_.size() == static_cast<size_t>(rows_ * cols_)) {
@@ -349,12 +323,15 @@ HybridAStarPlanner::HybridAStarPlanner(const Simulator &sim, const std::vector<s
                                      simulator_.params().trailer_length,
                                      simulator_.params().trailer_width});
 
-    // Ensure the simulator uses the same positional resolution as the planner.
+    // Ensure the simulator uses the same positional and angular resolutions as the planner.
     simulator_.set_grid_resolution(grid_resolution_);
+    simulator_.set_angular_resolution(angular_resolution_);
 
     // Initialise the simulator's derivative cache for the known control set.
     // This allows the planner to use a fast lookup during the search.
-    simulator_.init_derivative_cache(control_set_);
+    // Initialise derivative cache using the planner's angular resolution for
+    // consistency with the simulator's discretisation.
+    simulator_.init_derivative_cache(control_set_, angular_resolution_);
     if (rows_ > 0 && cols_ > 0) {
         distance_grid_.assign(rows_ * cols_, INF_COST);
         std::queue<std::pair<int, int>> q;
@@ -410,7 +387,7 @@ std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const 
 
     // Discretise the start state to obtain a unique key for the closed list.
     // Use the planner's grid resolution for consistent discretisation.
-    auto start_key = get_key(start, grid_resolution_);
+    auto start_key = get_key(start, grid_resolution_, angular_resolution_);
 
     // ---------------------------------------------------------------------
     // Optional reverse‑distance heuristic preparation
@@ -475,7 +452,7 @@ std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const 
 
             // Discretise the neighbour to obtain a lookup key.
             // Discretise using the same grid resolution as the planner.
-            auto neighbor_key = get_key(neighbor, grid_resolution_);
+            auto neighbor_key = get_key(neighbor, grid_resolution_, angular_resolution_);
             double tentative_g = g + dt_; // Cost to reach the neighbour.
             int existing_idx = state_index.find(neighbor_key);
 

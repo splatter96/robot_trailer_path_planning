@@ -84,6 +84,8 @@ int main(int argc, char **argv) {
     int cols = grid_size;
     std::vector<uint8_t> occupancy(rows * cols, 0);
 
+    double angular_resolution =  M_PI / 36.0;
+
     auto fill_rect = [&](double xmin, double ymin, double xmax, double ymax) {
         int i_min = static_cast<int>(std::floor(xmin / grid_resolution));
         int i_max = static_cast<int>(std::ceil(xmax / grid_resolution));
@@ -107,7 +109,7 @@ int main(int argc, char **argv) {
     std::cout << "Using control set: " << args.control_set << std::endl;
 
     auto start_init = Clock::now();
-    HybridAStarPlanner planner(sim, CONTROL_SETS[args.control_set], occupancy, rows, cols, grid_resolution, {0.0,0.0}, 0.1);
+    HybridAStarPlanner planner(sim, CONTROL_SETS[args.control_set], occupancy, rows, cols, grid_resolution, angular_resolution, {0.0,0.0}, 0.1);
     auto end_init = Clock::now();
     std::chrono::duration<double> init_dur = end_init - start_init;
     std::cout << "Planner initialisation took " << init_dur.count() << " seconds." << std::endl;

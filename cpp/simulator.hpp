@@ -54,7 +54,17 @@ public:
     void cache_discretization(RobotState &state) const;
     RobotState step_cached(const RobotState &state, size_t control_idx, double dt) const;
 
+    // Set the positional resolution used for discretising world coordinates.
     void set_grid_resolution(double res) const { pos_res_ = res; }
+
+    // Set the angular resolution (radians per discretisation step) used for
+    // indexing orientation angles. The inverse resolution is cached for fast
+    // conversion to indices.
+    void set_angular_resolution(double res) const {
+        ang_res_ = res;
+        // Update the reciprocal used by angle_to_index.
+        inv_res_ = (res != 0.0) ? 1.0 / res : 0.0;
+    }
 
 private:
     RobotParameters params_;

@@ -49,8 +49,8 @@ PYBIND11_MODULE(robot_trailer_cpp, m) {
 
     py::class_<HybridAStarPlanner>(m, "HybridAStarPlanner")
         .def(py::init([](const Simulator &sim, const std::vector<std::pair<double,double>> &control_set,
-                         py::array_t<bool> occupancy_grid, double grid_resolution,
-                         std::pair<double,double> grid_origin, double dt) {
+                 py::array_t<bool> occupancy_grid, double grid_resolution,
+                 double angular_resolution, std::pair<double,double> grid_origin, double dt) {
             std::vector<uint8_t> occ_vec;
             int rows = 0, cols = 0;
             if (!occupancy_grid.is_none()) {
@@ -64,11 +64,11 @@ PYBIND11_MODULE(robot_trailer_cpp, m) {
                     }
                 }
             }
-            return HybridAStarPlanner(sim, control_set, occ_vec, rows, cols, grid_resolution, grid_origin, dt);
+            return HybridAStarPlanner(sim, control_set, occ_vec, rows, cols, grid_resolution, angular_resolution, grid_origin, dt);
         }),
              py::arg("simulator"), py::arg("control_set"), py::arg("occupancy_grid") = py::none(),
-             py::arg("grid_resolution") = 0.1, py::arg("grid_origin") = std::make_pair(0.0, 0.0),
-             py::arg("dt") = 0.1)
+             py::arg("grid_resolution") = 0.1, py::arg("angular_resolution") = M_PI/36.0,
+             py::arg("grid_origin") = std::make_pair(0.0, 0.0), py::arg("dt") = 0.1)
         .def("plan", &HybridAStarPlanner::plan)
         .def("get_explored", &HybridAStarPlanner::get_explored)
         .def("profile_summary", &HybridAStarPlanner::profile_summary)
