@@ -80,15 +80,6 @@ void Simulator::init_derivative_cache(const std::vector<std::pair<double, double
 // called once for any state that will be used with step_cached.
 void Simulator::cache_discretization(RobotState &state) const {
     // Angular discretisation (used for derivative cache lookup).
-    // state.theta_idx = angle_to_index(state.theta_robot, inv_res_, n_theta_);
-    // state.beta_idx  = angle_to_index(state.beta,        inv_res_, n_beta_);
-
-
-    // ---- angular discretisation (replace angle_to_index) -----------------
-    // round the continuous angle to the nearest discrete step
-    //int ti = static_cast<int>(std::round(state.theta_robot * inv_ang_res_));
-    //int bi = static_cast<int>(std::round(state.beta        * inv_ang_res_));
-
     int ti = fast_round(state.theta_robot * inv_ang_res_);
     int bi = fast_round(state.beta        * inv_ang_res_);
 

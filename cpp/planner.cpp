@@ -19,10 +19,6 @@
 
 #include "planner.hpp"
 
-// Footprint lookup for fast collision checking
-// #include "footprint_lookup.hpp"
-
-// Include the definitions of RobotParameters, RobotState, and Simulator.
 #include "simulator.hpp"
 // Lightweight profiler for timing hot regions.
 #include "profiler.hpp"
@@ -217,14 +213,6 @@ static inline uint64_t splitmix64(uint64_t x) {
     return x ^ (x >> 31);
 }
 
-// static inline uint64_t pack_state_key(const StateKey &k) {
-//     uint64_t x = static_cast<uint32_t>(k.x);
-//     uint64_t y = static_cast<uint32_t>(k.y);
-//     uint64_t theta = static_cast<uint32_t>(k.theta & 0xffff);
-//     uint64_t beta = static_cast<uint32_t>(k.beta & 0xffff);
-//     return (x << 32) | (y << 16) | (theta << 8) | beta;
-// }
-
 static inline uint64_t pack_state_key(const StateKey& k) noexcept
 {
     return
@@ -308,13 +296,8 @@ struct StateIndexMap {
 
 // Produce a StateKey using the cached discretized values stored in the state.
 static inline StateKey get_key(const RobotState &s, double pos_res, double ang_res) {
-    // Use cached grid indices for position if available; otherwise fall back to rounding.
-    // int xi = (s.ix >= 0) ? s.ix : static_cast<int>(std::round(s.x / pos_res));
-    // int yi = (s.iy >= 0) ? s.iy : static_cast<int>(std::round(s.y / pos_res));
     int xi = s.ix;
     int yi = s.iy;
-    // int ti = static_cast<int>(std::round(s.theta_robot / ang_res));
-    // int bi = static_cast<int>(std::round(s.beta / ang_res));
     int ti = s.theta_idx;
     int bi = s.beta_idx;
     return {xi, yi, ti, bi};
@@ -419,7 +402,7 @@ std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const 
     const std::vector<double>* rev_dist_ptr = nullptr;
     if (rows_ > 0 && cols_ > 0) {
         // Compute a distance‑to‑goal field on the occupancy grid.
-        rev_dist = compute_reverse_dist(occupancy_grid_, rows_, cols_, grid_resolution_, {ox_, oy_}, goal);
+        // rev_dist = compute_reverse_dist(occupancy_grid_, rows_, cols_, grid_resolution_, {ox_, oy_}, goal);
         rev_dist_ptr = &rev_dist;
     }
     const bool has_occupancy = (rows_ > 0 && cols_ > 0);
@@ -474,7 +457,6 @@ std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const 
             if (has_occupancy && collides(neighbor)) continue;
 
             // Discretise the neighbour to obtain a lookup key.
-            // Discretise using the same grid resolution as the planner.
             auto neighbor_key = get_key(neighbor, grid_resolution_, angular_resolution_);
             double tentative_g = g + dt_; // Cost to reach the neighbour.
             int existing_idx = state_index.find(neighbor_key);

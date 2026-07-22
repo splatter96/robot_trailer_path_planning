@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
     int cols = grid_size;
     std::vector<uint8_t> occupancy(rows * cols, 0);
 
-    double angular_resolution =  M_PI / 36.0;
+    double angular_resolution =  M_PI / 18.0;
 
     auto fill_rect = [&](double xmin, double ymin, double xmax, double ymax) {
         int i_min = static_cast<int>(std::floor(xmin / grid_resolution));
