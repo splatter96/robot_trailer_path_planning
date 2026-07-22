@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
     RobotState goal{args.goal_x, args.goal_y, 0.0, 0.0};
 
     // Occupancy grid: 10m x 10m
-    double grid_resolution = 0.1;
+    double grid_resolution = 0.5;
     int grid_size = static_cast<int>(std::floor(10.0 / grid_resolution));
     int rows = grid_size;
     int cols = grid_size;

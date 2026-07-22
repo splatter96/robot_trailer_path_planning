@@ -100,13 +100,13 @@ static inline double heuristic(const RobotState &s, const RobotState &goal,
         int iy = s.iy;
         if (ix >= 0 && iy >= 0 && ix < rev_cols && iy < rev_rows) {
             double d = (*rev_dist)[iy * rev_cols + ix];
-            if (d < INF_COST) return d;
+            if (d < INF_COST) return 2 * d;
         }
     }
     // Fallback Euclidean distance.
     double dx = s.x - goal.x;
     double dy = s.y - goal.y;
-    return std::hypot(dx, dy);
+    return 2 * std::hypot(dx, dy);
 }
 
 struct StateKey {
@@ -217,12 +217,30 @@ static inline uint64_t splitmix64(uint64_t x) {
     return x ^ (x >> 31);
 }
 
-static inline uint64_t pack_state_key(const StateKey &k) {
-    uint64_t x = static_cast<uint32_t>(k.x);
-    uint64_t y = static_cast<uint32_t>(k.y);
-    uint64_t theta = static_cast<uint32_t>(k.theta & 0xffff);
-    uint64_t beta = static_cast<uint32_t>(k.beta & 0xffff);
-    return (x << 32) | (y << 16) | (theta << 8) | beta;
+// static inline uint64_t pack_state_key(const StateKey &k) {
+//     uint64_t x = static_cast<uint32_t>(k.x);
+//     uint64_t y = static_cast<uint32_t>(k.y);
+//     uint64_t theta = static_cast<uint32_t>(k.theta & 0xffff);
+//     uint64_t beta = static_cast<uint32_t>(k.beta & 0xffff);
+//     return (x << 32) | (y << 16) | (theta << 8) | beta;
+// }
+
+static inline uint64_t pack_state_key(const StateKey& k) noexcept
+{
+    return
+        (static_cast<uint64_t>(
+            static_cast<uint32_t>(k.x)
+        ) << 32)
+        |
+        (static_cast<uint64_t>(
+            static_cast<uint16_t>(k.y)
+        ) << 16)
+        |
+        (static_cast<uint64_t>(
+            static_cast<uint8_t>(k.theta)
+        ) << 8)
+        |
+        static_cast<uint8_t>(k.beta);
 }
 
 struct StateIndexMap {
@@ -291,10 +309,14 @@ struct StateIndexMap {
 // Produce a StateKey using the cached discretized values stored in the state.
 static inline StateKey get_key(const RobotState &s, double pos_res, double ang_res) {
     // Use cached grid indices for position if available; otherwise fall back to rounding.
-    int xi = (s.ix >= 0) ? s.ix : static_cast<int>(std::round(s.x / pos_res));
-    int yi = (s.iy >= 0) ? s.iy : static_cast<int>(std::round(s.y / pos_res));
-    int ti = static_cast<int>(std::round(s.theta_robot / ang_res));
-    int bi = static_cast<int>(std::round(s.beta / ang_res));
+    // int xi = (s.ix >= 0) ? s.ix : static_cast<int>(std::round(s.x / pos_res));
+    // int yi = (s.iy >= 0) ? s.iy : static_cast<int>(std::round(s.y / pos_res));
+    int xi = s.ix;
+    int yi = s.iy;
+    // int ti = static_cast<int>(std::round(s.theta_robot / ang_res));
+    // int bi = static_cast<int>(std::round(s.beta / ang_res));
+    int ti = s.theta_idx;
+    int bi = s.beta_idx;
     return {xi, yi, ti, bi};
 }
 
@@ -387,6 +409,7 @@ std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const 
 
     // Discretise the start state to obtain a unique key for the closed list.
     // Use the planner's grid resolution for consistent discretisation.
+    simulator_.cache_discretization(const_cast<RobotState&>(start)); // Cache discretised indices in start state.
     auto start_key = get_key(start, grid_resolution_, angular_resolution_);
 
     // ---------------------------------------------------------------------

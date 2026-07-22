@@ -116,6 +116,7 @@ def main() -> None:
         occupancy_grid=occupancy_grid,
         grid_resolution=grid_resolution,
         grid_origin=(0.0, 0.0),
+        angular_resolution=np.pi / 18.0,  # 10 degrees
     )
     endtime = time.time()
     print(f"Planner initialisation took {endtime - starttime:.4f} seconds.")
@@ -154,6 +155,7 @@ def main() -> None:
     path = planner.plan(start, goal)
     # Retrieve all nodes that were expanded during planning for visualisation.
     explored_nodes = planner.get_explored()
+    print(f"Number of explored nodes: {len(explored_nodes)}")
     endtime = time.time()
     print(f"Planning took {endtime - starttime:.4f} seconds.")
 
@@ -175,8 +177,8 @@ def main() -> None:
         """Draw the initial state before the animation starts."""
         # At frame 0 we have only the start state.
         # Visualise the start state, the path history, and the explored nodes.
-        # vis.draw(ax, path[0], [path[0]], explored=explored_nodes)
-        vis.draw(ax, path[0], [path[0]])
+        vis.draw(ax, path[0], [path[0]], explored=explored_nodes)
+        # vis.draw(ax, path[0], [path[0]])
         return []
 
     def update(frame):
@@ -187,8 +189,8 @@ def main() -> None:
         # Current state and the history up to this frame.
         state = path[frame]
         history = path[: frame + 1]
-        # vis.draw(ax, state, history, explored=explored_nodes)
-        vis.draw(ax, state, history)
+        vis.draw(ax, state, history, explored=explored_nodes)
+        # vis.draw(ax, state, history)
         return []
 
     anim = animation.FuncAnimation(
