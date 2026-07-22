@@ -116,7 +116,7 @@ def main() -> None:
         occupancy_grid=occupancy_grid,
         grid_resolution=grid_resolution,
         grid_origin=(0.0, 0.0),
-        angular_resolution=np.pi / 18.0,  # 10 degrees
+        angular_resolution=np.pi / 36.0,  # 5 degrees
     )
     endtime = time.time()
     print(f"Planner initialisation took {endtime - starttime:.4f} seconds.")

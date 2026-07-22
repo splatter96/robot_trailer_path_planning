@@ -55,7 +55,10 @@ public:
     RobotState step_cached(const RobotState &state, size_t control_idx, double dt) const;
 
     // Set the positional resolution used for discretising world coordinates.
-    void set_grid_resolution(double res) const { pos_res_ = res; }
+    void set_grid_resolution(double res) const {
+         pos_res_ = res; 
+         inv_pos_res_ = (res != 0.0) ? 1.0 / res : 0.0;
+        }
 
     // Set the angular resolution (radians per discretisation step) used for
     // indexing orientation angles. The inverse resolution is cached for fast
@@ -63,7 +66,7 @@ public:
     void set_angular_resolution(double res) const {
         ang_res_ = res;
         // Update the reciprocal used by angle_to_index.
-        inv_res_ = (res != 0.0) ? 1.0 / res : 0.0;
+        inv_ang_res_ = (res != 0.0) ? 1.0 / res : 0.0;
     }
 
 private:
@@ -74,7 +77,8 @@ private:
     mutable int n_theta_ = 0;
     mutable int n_beta_ = 0;
     mutable double ang_res_ = M_PI / 36.0;
-    mutable double inv_res_ = 0.0; // reciprocal of ang_res_ for fast index conversion
+    mutable double inv_ang_res_ = 0.0; // reciprocal of ang_res_ for fast index conversion
     mutable double pos_res_ = 0.1;
+    mutable double inv_pos_res_ = 0.0;
     mutable std::vector<std::pair<double, double>> cached_control_set_;
 };

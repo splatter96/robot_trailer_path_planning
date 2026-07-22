@@ -13,6 +13,11 @@ static inline double wrap_angle(double angle) {
     return angle;
 }
 
+static inline int fast_round(double val){
+    return static_cast<int>(val + (val >= -1.0 ? 0.5 : -0.5));
+    // return static_cast<int>(val + 0.5); // this only works if we have scrictly positive values, which we do for our discretisation indices
+}
+
 // Convert a continuous angle to a discretised index using the pre‑computed
 // reciprocal of the angular resolution (inv_res_). The result is wrapped into
 // the range [0, n) 
@@ -41,7 +46,6 @@ void Simulator::init_derivative_cache(const std::vector<std::pair<double, double
     // Store parameters for later use.
     cached_control_set_ = control_set;
     ang_res_ = ang_res;
-    inv_res_ = 1.0 / ang_res_;
     n_theta_ = static_cast<int>(std::ceil(2.0 * M_PI / ang_res_));
     n_beta_ = static_cast<int>(std::ceil(2.0 * M_PI / ang_res_));
     // Allocate cache: one entry per (control, theta, beta).
@@ -79,10 +83,14 @@ void Simulator::cache_discretization(RobotState &state) const {
     // state.theta_idx = angle_to_index(state.theta_robot, inv_res_, n_theta_);
     // state.beta_idx  = angle_to_index(state.beta,        inv_res_, n_beta_);
 
+
     // ---- angular discretisation (replace angle_to_index) -----------------
     // round the continuous angle to the nearest discrete step
-    int ti = static_cast<int>(std::round(state.theta_robot / ang_res_));
-    int bi = static_cast<int>(std::round(state.beta        / ang_res_));
+    //int ti = static_cast<int>(std::round(state.theta_robot * inv_ang_res_));
+    //int bi = static_cast<int>(std::round(state.beta        * inv_ang_res_));
+
+    int ti = fast_round(state.theta_robot * inv_ang_res_);
+    int bi = fast_round(state.beta        * inv_ang_res_);
 
     // wrap into [0, n_theta_) and [0, n_beta_)
     if (ti >= n_theta_)
@@ -100,10 +108,10 @@ void Simulator::cache_discretization(RobotState &state) const {
 
     // Position discretisation for fast collision checking and state indexing.
     double pos_res = pos_res_; // metres per grid cell
-    state.ix   = static_cast<int>(std::round(state.x / pos_res));
-    state.iy   = static_cast<int>(std::round(state.y / pos_res));
-    state.ix_t = static_cast<int>(std::round(state.trailer_x / pos_res));
-    state.iy_t = static_cast<int>(std::round(state.trailer_y / pos_res));
+    state.ix   = fast_round(state.x * inv_pos_res_);
+    state.iy   = fast_round(state.y * inv_pos_res_);
+    state.ix_t = fast_round(state.trailer_x * inv_pos_res_);
+    state.iy_t = fast_round(state.trailer_y * inv_pos_res_);
 }
 
 RobotState Simulator::step_cached(const RobotState &state, size_t control_idx, double dt) const {
