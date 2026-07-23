@@ -100,8 +100,8 @@ static inline double heuristic(const RobotState &s, const RobotState &goal,
         }
     }
     // Fallback Euclidean distance.
-    double dx = s.x - goal.x;
-    double dy = s.y - goal.y;
+    double dx = s.trailer_x - goal.x;
+    double dy = s.trailer_y - goal.y;
     return 2 * std::hypot(dx, dy);
 }
 
@@ -422,7 +422,7 @@ std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const 
     state_index.insert(start_key, 0);
     open_list.push(0);
 
-    const double goal_thresh_sqr = 0.2 * 0.2; // Goal proximity threshold (squared meters).
+    const double goal_thresh_sqr = 0.05 * 0.05; // Goal proximity threshold (squared meters).
 
     // ---------------------------------------------------------------------
     // Main A* loop – expand the most promising node until the goal is reached
@@ -438,8 +438,8 @@ std::vector<RobotState> HybridAStarPlanner::plan(const RobotState &start, const 
         explored_.push_back(current);
 
         // Goal test – if within the threshold, reconstruct the path.
-        if ((current.x - goal.x) * (current.x - goal.x) +
-            (current.y - goal.y) * (current.y - goal.y) < goal_thresh_sqr) {
+        if ((current.trailer_x - goal.x) * (current.trailer_x - goal.x) +
+            (current.trailer_y - goal.y) * (current.trailer_y - goal.y) < goal_thresh_sqr) {
             std::vector<RobotState> path;
             int back_idx = current_idx;
             while (back_idx >= 0) {
