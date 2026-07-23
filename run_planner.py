@@ -39,8 +39,8 @@ CONTROL_SETS = {
     # primitives while still offering good coverage.
     "dense": [
         (vl, vr)
-        for vl in np.linspace(-1.0, 1.0, 3)  # -1.0, -0.75, ..., 1.0
-        for vr in np.linspace(-1.0, 1.0, 3)
+        for vl in np.linspace(-1.0, 1.0, 5)  # -1.0, -0.75, ..., 1.0
+        for vr in np.linspace(-1.0, 1.0, 5)
     ],
 }
 
@@ -108,7 +108,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Planner initialisation (with occupancy grid) and distance‑map visualisation
     # ------------------------------------------------------------------
-    print(f"Using control set: {CONTROL_SETS[args.set]}")
+    # print(f"Using control set: {CONTROL_SETS[args.set]}")
     starttime = time.time()
     planner = HybridAStarPlanner(
         simulator=sim,
@@ -116,8 +116,8 @@ def main() -> None:
         occupancy_grid=occupancy_grid,
         grid_resolution=grid_resolution,
         grid_origin=(0.0, 0.0),
-        # angular_resolution=np.pi / 36.0,  # 5 degrees
-        angular_resolution=np.pi / 18.0,  # 10 degrees
+        angular_resolution=np.pi / 36.0,  # 5 degrees
+        # angular_resolution=np.pi / 18.0,  # 10 degrees
     )
     endtime = time.time()
     print(f"Planner initialisation took {endtime - starttime:.4f} seconds.")

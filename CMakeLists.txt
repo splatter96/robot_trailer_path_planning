@@ -49,11 +49,11 @@ add_executable(run_planner_native
     cpp/run_planner_native.cpp
     cpp/simulator.cpp
     cpp/planner.cpp
-    #cpp/footprint_lookup.cpp
 )
 
 target_compile_features(run_planner_native PRIVATE cxx_std_17)
 target_compile_options(run_planner_native PRIVATE -O2 -g)
+#target_compile_options(run_planner_native PRIVATE -O3 -lto)
 
 set_target_properties(run_planner_native PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

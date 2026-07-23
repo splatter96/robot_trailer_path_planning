@@ -323,10 +323,11 @@ HybridAStarPlanner::HybridAStarPlanner(const Simulator &sim, const std::vector<s
         occupancy_grid_.clear();
     }
 
-    clearance_threshold_ = std::max({simulator_.params().robot_length,
-                                     simulator_.params().robot_width,
-                                     simulator_.params().trailer_length,
-                                     simulator_.params().trailer_width});
+    clearance_threshold_robot_ = std::hypot(simulator_.params().robot_length/2, simulator_.params().robot_width/2);
+    clearance_threshold_trailer_ = std::hypot(simulator_.params().trailer_length/2, simulator_.params().trailer_width/2);
+
+    std::cout << "Using clearance threshold: " << clearance_threshold_robot_ << " m" << std::endl;
+    std::cout << "Using clearance threshold: " << clearance_threshold_trailer_ << " m" << std::endl;
 
     // Ensure the simulator uses the same positional and angular resolutions as the planner.
     simulator_.set_grid_resolution(grid_resolution_);
@@ -506,12 +507,12 @@ bool HybridAStarPlanner::collides(const RobotState &state) const {
 
     // ----- Robot centre -----
     if (state.ix >= 0 && state.iy >= 0 && state.ix < cols_ && state.iy < rows_) {
-        if (distance_grid_[state.iy * cols_ + state.ix] < clearance_threshold_) return true;
+        if (distance_grid_[state.iy * cols_ + state.ix] < clearance_threshold_robot_) return true;
     }
 
     // ----- Trailer centre -----
     if (state.ix_t >= 0 && state.iy_t >= 0 && state.ix_t < cols_ && state.iy_t < rows_) {
-        if (distance_grid_[state.iy_t * cols_ + state.ix_t] < clearance_threshold_) return true;
+        if (distance_grid_[state.iy_t * cols_ + state.ix_t] < clearance_threshold_trailer_) return true;
     }
     return false;
 }

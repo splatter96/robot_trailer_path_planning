@@ -55,7 +55,8 @@ private:
 
     // Distance map (Euclidean distance to nearest obstacle) and clearance threshold.
     std::vector<double> distance_grid_; // flattened row-major
-    double clearance_threshold_ = 0.0;
+    double clearance_threshold_robot_ = 0.0;
+    double clearance_threshold_trailer_ = 0.0;
 
     // Lightweight profiler for timing hot regions.
     Profiler profiler_;
